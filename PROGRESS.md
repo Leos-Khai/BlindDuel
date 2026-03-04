@@ -1,34 +1,44 @@
 # BlindDuel — Rewrite Progress
 
-## Status: Phase 1 Complete
+## Status: Phase 5 — All Phases Complete
 
 ## Completed
-- [x] Phase 1: Foundation
-  - Project structure (Core/, Detection/, UI/, Handlers/, Patches/, Models/, Util/)
-  - BlindDuel.csproj with lib references
-  - Core/Plugin.cs — MelonMod entry point
-  - Core/ScreenReader.cs — Tolk P/Invoke wrapper
-  - Core/BlindDuelCore.cs — MonoBehaviour singleton with Update loop
-  - Core/Speech.cs — Priority-based speech pipeline (replaces queueNextSpeech/pendingButtonText)
-  - Util/DebugLog.cs — Thread-safe file logging
-  - Util/TextUtil.cs — StripTags, IsBannedText
-  - Models/Enums.cs — Menu, CardAttribute, CardRarity enums
-  - Detection/NavigationState.cs — Navigation tracking state
-  - Detection/ScreenDetector.cs — Stub
-  - Detection/DialogDetector.cs — Stub
-  - Handlers/IMenuHandler.cs — Handler interface
-  - Handlers/HandlerRegistry.cs — Auto-discovery registry
+- [x] Phase 1: Foundation (project setup, core files, GitHub repo)
+- [x] Phase 2: Detection & UI extraction layer
+- [x] Phase 3: Patches, models, handler infrastructure
+- [x] Phase 4: All menu handlers + Speech API rewrite
+- [x] Phase 5: Polish & verification
 
-## In Progress
-- [ ] Phase 2: Detection & UI extraction
+## Architecture Summary
 
-## Remaining
-- [ ] Phase 3: Handler infrastructure & patches
-- [ ] Phase 4: All menu handlers (full parity)
-- [ ] Phase 5: Polish & verification
+### Speech Flow (Tolk-based)
+- `Speech.AnnounceScreen(text)` — interrupts, for screen/menu changes
+- `Speech.SayItem(text)` — interrupts, for item navigation
+- `Speech.SayIndex(current, total)` — queued after item name
+- `Speech.SayDescription(text)` — queued after item + index
+- `Speech.SayQueued(text)` — queued, for supplementary info
+- `Speech.SayImmediate(text)` — interrupts, for urgent info (LP changes)
 
-## Architecture Notes
-- Speech.Say(text, priority) queues messages; Speech.FlushPending() processes them in priority order each frame
-- HandlerRegistry auto-discovers IMenuHandler implementations via reflection
-- Detection runs before speech flush in Update(), ensuring headers speak before buttons
-- No global mutable state god object — state split into NavigationState, Speech, and per-handler state
+### Handler Pattern
+- Implement `IMenuHandler` in a new file under `Handlers/`
+- `HandlerRegistry` auto-discovers via reflection at startup
+- `CanHandle(vcName)` matches ViewController names
+- `OnButtonFocused(button)` returns enhanced text or null for default
+- Adding a new screen = one new file, zero changes elsewhere
+
+### File Structure
+- `Core/` — Plugin, BlindDuelCore, Speech, ScreenReader
+- `Detection/` — ScreenDetector, DialogDetector, NavigationState
+- `UI/` — TextExtractor, ElementReader, TransformSearch
+- `Handlers/` — IMenuHandler + 13 handler implementations
+- `Patches/` — Button, Dialog, Duel, Navigation, Browser, Solo patches
+- `Models/` — CardData, PreviewData, DuelState, SoloState, CardBrowserState, Enums
+- `Util/` — Log, TextUtil, EnumUtil
+
+## Known TODOs
+- [ ] Card info reading (CopyUI equivalent) — CardData extraction from UI paths
+- [ ] CardInfo.SetDescriptionArea patch → schedule card reading via DuelHandler
+- [ ] DuelListCard click → card info via DuelHandler
+- [ ] Preview elements OnClick → card info reading with delay
+- [ ] ProcessDailyReward equivalent (not yet ported)
+- [ ] Test in-game with actual Master Duel
