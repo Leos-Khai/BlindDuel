@@ -4,98 +4,144 @@ using MelonLoader;
 
 namespace BlindDuel
 {
-    public enum SpeechPriority
-    {
-        Info = 0,
-        Button = 1,
-        Dialog = 2,
-        ScreenHeader = 3
-    }
-
+    /// <summary>
+    /// High-level speech coordination for BlindDuel.
+    ///
+    /// Speech flow:
+    /// 1. Menu/screen announcement → Say() (interrupts) — only actual visible game text
+    /// 2. Current focused item → SayQueued() — queues after announcement
+    /// 3. Navigation between items → Say() with item text, then SayQueued() for index
+    /// 4. Item description/help → SayQueued() after item name
+    /// </summary>
     public static class Speech
     {
         private static readonly List<string> _history = new();
         private static string _lastSpoken = "";
         private static string _lastHeader = "";
-        private static DateTime _lastSpeechTime;
-        private static readonly TimeSpan _cooldown = TimeSpan.FromSeconds(0.1);
-
-        // Pending messages queued this frame, processed in Update
-        private static readonly List<SpeechMessage> _pending = new();
 
         public static IReadOnlyList<string> History => _history;
 
-        public static void Say(string text, SpeechPriority priority = SpeechPriority.Button)
+        /// <summary>
+        /// Announce a screen or menu change. Interrupts current speech.
+        /// Only speak actual visible text from the game data.
+        /// </summary>
+        public static void AnnounceScreen(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
-            text = TextUtil.StripTags(text);
-            if (string.IsNullOrWhiteSpace(text)) return;
-
-            _pending.Add(new SpeechMessage(text, priority));
-        }
-
-        public static void SayScreenHeader(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return;
-            text = TextUtil.StripTags(text);
+            text = TextUtil.StripTags(text).Trim();
             if (string.IsNullOrWhiteSpace(text) || text == _lastHeader) return;
 
             _lastHeader = text;
             _lastSpoken = "";
 
-            Log.Write($"[Header] {text}");
-            MelonLogger.Msg($"screen header: {text}");
-            ScreenReader.Output(text, interrupt: true);
-            _lastSpeechTime = DateTime.Now;
-
-            // Next speech queues instead of interrupting
-            _queueNext = true;
+            Log.Write($"[Screen] {text}");
+            MelonLogger.Msg($"screen: {text}");
+            ScreenReader.Say(text);
+            RecordHistory(text);
         }
-
-        private static bool _queueNext;
 
         /// <summary>
-        /// Called each frame from BlindDuelCore.Update to flush pending messages.
-        /// Higher priority messages speak first. Same-frame messages at the same
-        /// priority are spoken in order they were queued.
+        /// Speak a menu item when navigating. Interrupts current speech.
+        /// After this, call SayIndex() and SayDescription() to queue details.
         /// </summary>
-        public static void FlushPending()
+        public static void SayItem(string text)
         {
-            if (_pending.Count == 0) return;
+            if (string.IsNullOrWhiteSpace(text)) return;
+            text = TextUtil.StripTags(text).Trim();
+            if (string.IsNullOrWhiteSpace(text) || text == _lastSpoken) return;
 
-            // Sort by priority descending (highest first)
-            _pending.Sort((a, b) => b.Priority.CompareTo(a.Priority));
-
-            foreach (var msg in _pending)
-            {
-                Speak(msg.Text);
-            }
-            _pending.Clear();
-        }
-
-        private static void Speak(string text)
-        {
-            bool canSpeak = _queueNext || DateTime.Now - _lastSpeechTime >= _cooldown;
-            if (!canSpeak) return;
-
-            if (text == _lastSpoken) return;
-
-            Log.Write($"[Speech] {text}");
-            MelonLogger.Msg($"text to speak: {text}");
-
-            ScreenReader.Output(text, interrupt: !_queueNext);
-            _queueNext = false;
-
-            _history.Add(text);
             _lastSpoken = text;
-            _lastSpeechTime = DateTime.Now;
+
+            Log.Write($"[Item] {text}");
+            MelonLogger.Msg($"item: {text}");
+            ScreenReader.Say(text);
+            RecordHistory(text);
         }
 
+        /// <summary>
+        /// Queue the item's position index after the item name.
+        /// e.g. "2 of 5"
+        /// </summary>
+        public static void SayIndex(int current, int total)
+        {
+            if (total <= 1) return;
+            string text = $"{current} of {total}";
+            Log.Write($"[Index] {text}");
+            ScreenReader.SayQueued(text);
+        }
+
+        /// <summary>
+        /// Queue descriptive/help text after the item name and index.
+        /// </summary>
+        public static void SayDescription(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            text = TextUtil.StripTags(text).Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            Log.Write($"[Desc] {text}");
+            ScreenReader.SayQueued(text);
+        }
+
+        /// <summary>
+        /// Queue additional info after item (non-interrupting).
+        /// Use for supplementary details like LP changes, download progress, etc.
+        /// </summary>
+        public static void SayQueued(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            text = TextUtil.StripTags(text).Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            Log.Write($"[Queued] {text}");
+            MelonLogger.Msg($"queued: {text}");
+            ScreenReader.SayQueued(text);
+            RecordHistory(text);
+        }
+
+        /// <summary>
+        /// Speak immediately with interrupt. For urgent info like LP changes.
+        /// </summary>
+        public static void SayImmediate(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            text = TextUtil.StripTags(text).Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            _lastSpoken = text;
+            Log.Write($"[Immediate] {text}");
+            MelonLogger.Msg($"immediate: {text}");
+            ScreenReader.Say(text);
+            RecordHistory(text);
+        }
+
+        /// <summary>
+        /// Reset dedup tracking (call when a button is deselected).
+        /// </summary>
         public static void ResetDedup()
         {
             _lastSpoken = "";
         }
 
-        private readonly record struct SpeechMessage(string Text, SpeechPriority Priority);
+        /// <summary>
+        /// Silence current speech.
+        /// </summary>
+        public static void Silence()
+        {
+            ScreenReader.Silence();
+        }
+
+        /// <summary>
+        /// Repeat the last spoken message.
+        /// </summary>
+        public static void RepeatLast()
+        {
+            ScreenReader.RepeatLast();
+        }
+
+        private static void RecordHistory(string text)
+        {
+            _history.Add(text);
+        }
     }
 }

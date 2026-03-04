@@ -58,15 +58,15 @@ namespace BlindDuel
         }
 
         /// <summary>
-        /// Get the position of a SelectionButton among its active siblings.
-        /// Returns "N of M" string, or null if not applicable.
+        /// Get the index and total count of a SelectionButton among its active siblings.
+        /// Returns (index, total). Returns (0, 0) if not found or only one button.
         /// </summary>
-        public static string GetButtonPosition(SelectionButton button)
+        public static (int index, int total) GetButtonIndex(SelectionButton button)
         {
             try
             {
                 Transform parent = button.transform.parent;
-                if (parent == null) return null;
+                if (parent == null) return (0, 0);
 
                 int index = 0;
                 int total = 0;
@@ -86,11 +86,10 @@ namespace BlindDuel
                     }
                 }
 
-                if (found && total > 1)
-                    return $", {index} of {total}";
+                if (found) return (index, total);
             }
-            catch (Exception ex) { Log.Write($"[GetButtonPosition] {ex.Message}"); }
-            return null;
+            catch (Exception ex) { Log.Write($"[GetButtonIndex] {ex.Message}"); }
+            return (0, 0);
         }
     }
 }

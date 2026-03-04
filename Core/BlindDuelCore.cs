@@ -1,5 +1,4 @@
 using System.Linq;
-using System.Collections.Generic;
 using UnityEngine;
 using Il2CppYgomGame.Duel;
 using MelonLoader;
@@ -17,21 +16,13 @@ namespace BlindDuel
         {
             Instance = this;
             Log.Init();
-            ScreenReader.TrySAPI(true);
-            ScreenReader.Load();
-
+            ScreenReader.Initialize();
             HandlerRegistry.Init();
-
-            string sr = ScreenReader.DetectScreenReader();
-            MelonLogger.Msg(sr != null
-                ? $"Screen reader detected: {sr}"
-                : "No screen reader detected, using SAPI fallback");
-            Log.Write($"[Init] Screen reader: {sr ?? "SAPI fallback"}");
         }
 
         public void OnApplicationQuit()
         {
-            ScreenReader.Unload();
+            ScreenReader.Shutdown();
         }
 
         public void Update()
@@ -44,7 +35,7 @@ namespace BlindDuel
                     var duelLPs = FindObjectsOfType<DuelLP>().ToList();
                     var near = duelLPs.Find(e => e.m_IsNear);
                     var far = duelLPs.Find(e => !e.m_IsNear);
-                    Speech.Say($"Your life points: {near?.currentLP}\nOpponent's life points: {far?.currentLP}", SpeechPriority.Info);
+                    Speech.SayImmediate($"Your life points: {near?.currentLP}\nOpponent's life points: {far?.currentLP}");
                 }
 
                 if (Input.GetKeyDown(KeyCode.LeftAlt))
@@ -60,12 +51,9 @@ namespace BlindDuel
                 }
             }
 
-            // Detection runs first so headers/dialogs queue before button text
+            // Detection: screen/dialog changes
             DialogDetector.Poll();
             ScreenDetector.Poll();
-
-            // Then flush all queued speech in priority order
-            Speech.FlushPending();
         }
     }
 }

@@ -209,7 +209,7 @@ namespace BlindDuel
                 {
                     string version = ElementReader.GetElementText(GetView(focusVC), "CodeVer");
                     if (!string.IsNullOrWhiteSpace(version))
-                        Speech.SayScreenHeader(version);
+                        Speech.AnnounceScreen(version);
                     return;
                 }
 
@@ -232,7 +232,7 @@ namespace BlindDuel
                 }
 
                 Log.Write($"[ScreenChange] {cleanName} | header='{headerText}', title='{titleText}'");
-                Speech.SayScreenHeader(announcement);
+                Speech.AnnounceScreen(announcement);
 
                 // Queue the currently focused button so user knows where they are
                 var contentCanvas = GameObject.Find("UI/ContentCanvas");
@@ -286,7 +286,7 @@ namespace BlindDuel
                 if (texts.Count == 0) return;
 
                 string announcement = string.Join(". ", texts) + $". {pageText}";
-                Speech.SayScreenHeader(announcement);
+                Speech.AnnounceScreen(announcement);
                 QueueFocusedItem(focusVC.gameObject);
             }
             catch (Exception ex) { Log.Write($"[Enquete] Error: {ex.Message}"); }
@@ -319,13 +319,13 @@ namespace BlindDuel
                     if (string.IsNullOrEmpty(msg))
                         msg = _activeDownloadVC.DownloadingText?.text?.Trim();
 
-                    Speech.Say(msg ?? $"{percent} percent", SpeechPriority.Info);
+                    Speech.SayQueued(msg ?? $"{percent} percent");
                     _activeDownloadVC = null;
                     _lastDownloadPercent = -1;
                 }
                 else
                 {
-                    Speech.Say($"{percent} percent", SpeechPriority.Info);
+                    Speech.SayQueued($"{percent} percent");
                 }
             }
             catch (Exception ex) { Log.Write($"[Download] {ex.Message}"); }
@@ -351,8 +351,10 @@ namespace BlindDuel
                         string btnText = TextExtractor.ExtractFirst(btn.gameObject);
                         if (!string.IsNullOrWhiteSpace(btnText))
                         {
-                            string pos = TransformSearch.GetButtonPosition(btn);
-                            Speech.Say(btnText + (pos ?? ""), SpeechPriority.Button);
+                            Speech.SayQueued(btnText);
+                            var (index, total) = TransformSearch.GetButtonIndex(btn);
+                            if (total > 1)
+                                Speech.SayIndex(index, total);
                         }
                         return;
                     }

@@ -121,7 +121,7 @@ namespace BlindDuel
                 }
 
                 if (!string.IsNullOrEmpty(text))
-                    Speech.Say(text, SpeechPriority.Button);
+                    Speech.SayItem(text);
             }
             catch (Exception ex) { Log.Write($"[ColorContainer] {ex.Message}"); }
         }
@@ -177,13 +177,12 @@ namespace BlindDuel
 
             if (string.IsNullOrWhiteSpace(text)) return;
 
-            // Append position (e.g. ", 3 of 5")
-            string pos = TransformSearch.GetButtonPosition(__instance);
-            if (!string.IsNullOrEmpty(pos))
-                text += pos;
+            // Speak the item name (interrupts), then queue index after it
+            Speech.SayItem(text);
 
-            // Queue as button priority — detection runs first, then speech flushes
-            Speech.Say(text, SpeechPriority.Button);
+            var (index, total) = TransformSearch.GetButtonIndex(__instance);
+            if (total > 1)
+                Speech.SayIndex(index, total);
         }
     }
 

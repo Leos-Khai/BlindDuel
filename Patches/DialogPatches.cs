@@ -34,7 +34,7 @@ namespace BlindDuel
             ScreenDetector.TrackDownload(__instance);
             string title = ScreenDetector.FindScreenTitle(__instance);
             if (!string.IsNullOrEmpty(title))
-                Speech.SayScreenHeader(title);
+                Speech.AnnounceScreen(title);
             Log.Write("[Download] DownloadViewController created, tracking progress");
         }
     }

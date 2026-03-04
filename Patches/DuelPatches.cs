@@ -11,7 +11,7 @@ namespace BlindDuel
         static void Postfix(DuelLP __instance)
         {
             string who = __instance.name.Contains("Far") ? "Opponent's" : "Your";
-            Speech.Say($"{who} current life points: {__instance.currentLP}", SpeechPriority.Info);
+            Speech.SayImmediate($"{who} current life points: {__instance.currentLP}");
 
             if (__instance.currentLP < 1)
             {
