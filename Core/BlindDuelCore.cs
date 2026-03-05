@@ -55,5 +55,13 @@ namespace BlindDuel
             DialogDetector.Poll();
             ScreenDetector.Poll();
         }
+
+        /// <summary>
+        /// Invokable card reading method — used with MonoBehaviour.Invoke() for delayed reads.
+        /// </summary>
+        public void ReadCardDelayed()
+        {
+            CardReader.ReadAndSpeak();
+        }
     }
 }

@@ -11,7 +11,8 @@ namespace BlindDuel
     {
         public string Name { get; set; } = "";
         public string Description { get; set; } = "";
-        public string Stars { get; set; } = "";
+        public string Level { get; set; } = "";
+        public string Rank { get; set; } = "";
         public string Atk { get; set; } = "";
         public string Def { get; set; } = "";
         public string PendulumScale { get; set; } = "";
@@ -23,9 +24,11 @@ namespace BlindDuel
         public bool IsInHand { get; set; } = true;
         public GameObject CardObject { get; set; }
 
+        public bool IsMonster => !string.IsNullOrEmpty(Atk);
+
         public void Clear()
         {
-            Name = Description = Stars = Atk = Def = PendulumScale =
+            Name = Description = Level = Rank = Atk = Def = PendulumScale =
                 Link = Element = Attributes = SpellType = Owned = "";
             IsInHand = true;
             CardObject = null;
@@ -41,9 +44,10 @@ namespace BlindDuel
             var parts = new List<string> { $"Name: {Name}" };
 
             if (!string.IsNullOrEmpty(Atk)) parts.Add($"Attack: {Atk}");
-            if (!string.IsNullOrEmpty(Link)) parts.Add($"Link level: {Link}");
+            if (!string.IsNullOrEmpty(Link)) parts.Add($"Link rating: {Link}");
             if (!string.IsNullOrEmpty(Def)) parts.Add($"Defense: {Def}");
-            if (!string.IsNullOrEmpty(Stars)) parts.Add($"Stars: {Stars}");
+            if (!string.IsNullOrEmpty(Rank)) parts.Add($"Rank: {Rank}");
+            if (!string.IsNullOrEmpty(Level)) parts.Add($"Level: {Level}");
             if (!string.IsNullOrEmpty(Element)) parts.Add($"Element: {Element}");
             if (!string.IsNullOrEmpty(PendulumScale)) parts.Add($"Pendulum scale: {PendulumScale}");
             if (!string.IsNullOrEmpty(Attributes))
@@ -51,7 +55,7 @@ namespace BlindDuel
                 string attrs = trimAttributes && Attributes.Length > 2 ? Attributes[1..^1] : Attributes;
                 parts.Add($"Attributes: {attrs}");
             }
-            if (!string.IsNullOrEmpty(SpellType)) parts.Add($"Spell type: {SpellType}");
+            if (!IsMonster && !string.IsNullOrEmpty(SpellType)) parts.Add($"Spell type: {SpellType}");
             if (!string.IsNullOrEmpty(Owned)) parts.Add($"Owned: {Owned}");
             if (!string.IsNullOrEmpty(Description)) parts.Add($"Description: {Description}");
 

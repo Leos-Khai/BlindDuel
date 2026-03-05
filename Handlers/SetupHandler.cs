@@ -7,7 +7,7 @@ namespace BlindDuel
         public bool CanHandle(string viewControllerName) =>
             viewControllerName is "GameEntryV1" or "GameEntrySequenceV2" or "Enquete";
 
-        public void OnScreenEntered(string viewControllerName) { }
+        public bool OnScreenEntered(string viewControllerName) => false;
 
         public string OnButtonFocused(SelectionButton button) => null;
     }

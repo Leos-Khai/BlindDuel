@@ -8,7 +8,7 @@ namespace BlindDuel
         public bool CanHandle(string viewControllerName) =>
             viewControllerName is "MissionMenu" or "Mission";
 
-        public void OnScreenEntered(string viewControllerName) { }
+        public bool OnScreenEntered(string viewControllerName) => false;
 
         public string OnButtonFocused(SelectionButton button)
         {

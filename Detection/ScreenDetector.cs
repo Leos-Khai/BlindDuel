@@ -192,6 +192,7 @@ namespace BlindDuel
 
                 string cleanName = vcName.EndsWith("(Clone)") ? vcName[..^7] : vcName;
                 UpdateMenuContext(cleanName);
+                HandlerRegistry.SetCurrentFromVC(cleanName);
 
                 // Setup screens — skip announcement
                 if (cleanName is "GameEntryV1" or "GameEntrySequenceV2") return;
@@ -204,14 +205,10 @@ namespace BlindDuel
                     return;
                 }
 
-                // Title screen — just read version
-                if (cleanName == "Title")
-                {
-                    string version = ElementReader.GetElementText(GetView(focusVC), "CodeVer");
-                    if (!string.IsNullOrWhiteSpace(version))
-                        Speech.AnnounceScreen(version);
+                // Let the handler announce if it wants to
+                var handler = HandlerRegistry.Current;
+                if (handler != null && handler.OnScreenEntered(cleanName))
                     return;
-                }
 
                 // Standard screen: combine header + title
                 string headerText = ReadGameHeaderText();

@@ -28,7 +28,7 @@ Each screen/menu has its own handler class implementing `IMenuHandler`. The `Han
 ### File Structure
 - **Core/** — Plugin.cs (MelonMod entry), BlindDuelCore.cs (MonoBehaviour singleton), Speech.cs (speech coordination), ScreenReader.cs (Tolk P/Invoke)
 - **Detection/** — ScreenDetector.cs (VC changes), DialogDetector.cs (dialog polling + patched), NavigationState.cs (current menu, focus VC)
-- **UI/** — TextExtractor.cs (unified tree walker), ElementReader.cs (EOM serializedElements), TransformSearch.cs (name-based search)
+- **UI/** — TextExtractor.cs (unified tree walker), ElementReader.cs (EOM serializedElements), TransformSearch.cs (name-based search), CardReader.cs (card data extraction from UI panels)
 - **Handlers/** — IMenuHandler interface + 13 implementations (Home, Settings, Notifications, Missions, Shop, DuelPass, Deck, Duel, Solo, Title, Setup, CardBrowser, Profile, Friends)
 - **Patches/** — ButtonPatches, DialogPatches, DuelPatches, NavigationPatches, BrowserPatches, SoloPatches
 - **Models/** — CardData/PreviewData, DuelState, SoloState, CardBrowserState, Enums (Menu, CardAttribute, CardRarity)
@@ -40,6 +40,21 @@ Each screen/menu has its own handler class implementing `IMenuHandler`. The `Han
 - **TextExtractor** is the single unified text finder — configurable via TextSearchOptions
 - **ElementReader** reads game's EOM serializedElements (more reliable than hierarchy scanning)
 - **Il2Cpp type casting** uses `.TryCast<T>()` from Il2CppInterop.Runtime
+
+## Decompiled Game Source
+
+`decompiled/` contains Assembly-CSharp.dll decompiled into individual .cs files, one per class, organized by namespace folders (e.g. `decompiled/Il2CppYgomGame.Duel/DuelClient.cs`). Use these to look up game class internals, method signatures, fields, and UI hierarchy details when adding or reworking features.
+
+**Key locations:**
+- `decompiled/Il2CppYgomGame.Duel/` — DuelClient, CardInfo, CardRoot, DuelLP
+- `decompiled/Il2CppYgomSystem.UI/` — SelectionButton, ViewController, SnapContentManager
+- `decompiled/Il2CppYgomSystem.ElementSystem/` — ElementObjectManager
+- `decompiled/Il2CppYgomGame.Home/` — Home screen classes
+- `decompiled/Il2CppYgomGame.Deck/` — Deck editor classes
+- `decompiled/Il2CppYgomGame.Solo/` — Solo mode classes
+- `decompiled/Il2CppYgomGame.Shop/` — Shop classes
+
+**NEVER commit decompiled/ to git** — it contains copyrighted game code and is in .gitignore.
 
 ## Dependencies
 

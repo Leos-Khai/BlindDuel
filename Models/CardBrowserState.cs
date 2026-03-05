@@ -8,5 +8,8 @@ namespace BlindDuel
     public static class CardBrowserState
     {
         public static SnapContentManager SnapContentManager { get; set; }
+
+        public static bool IsOpen => SnapContentManager != null;
+        public static int CurrentPage => SnapContentManager?.currentPage ?? 0;
     }
 }

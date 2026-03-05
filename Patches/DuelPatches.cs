@@ -48,7 +48,15 @@ namespace BlindDuel
         [HarmonyPostfix]
         static void Postfix(CardInfo __instance)
         {
-            // TODO: Schedule card info reading via DuelHandler
+            try
+            {
+                if (!__instance.gameObject.activeInHierarchy) return;
+                CardReader.ReadAndSpeak();
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"[PatchCardInfoSetDescription] {ex.Message}");
+            }
         }
     }
 }

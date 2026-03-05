@@ -16,9 +16,9 @@ namespace BlindDuel
 
         /// <summary>
         /// Called when the screen this handler manages becomes focused.
-        /// Use this to announce screen-specific information.
+        /// Return true to skip the default screen announcement.
         /// </summary>
-        void OnScreenEntered(string viewControllerName);
+        bool OnScreenEntered(string viewControllerName);
 
         /// <summary>
         /// Called when a button is focused/selected on a screen this handler manages.

@@ -70,7 +70,7 @@ namespace BlindDuel
                 if (NavigationState.IsInDuel && parentName.Contains("DuelListCard"))
                 {
                     parent.GetComponent<SelectionButton>().Click();
-                    // TODO: CopyUI equivalent via DuelHandler
+                    CardReader.ReadAndSpeak();
                     return;
                 }
 
@@ -228,10 +228,11 @@ namespace BlindDuel
                 DuelState.Clear();
             }
 
-            // Preview card info on click
+            // Preview card info on click — delay to let UI populate
             if (PreviewElements.Contains(__instance.name))
             {
-                // TODO: Schedule CopyUI via handler
+                float delay = NavigationState.CurrentMenu == Menu.DuelPass ? 1.5f : 0.5f;
+                BlindDuelCore.Instance.Invoke(nameof(BlindDuelCore.ReadCardDelayed), delay);
             }
         }
     }

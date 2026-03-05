@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="decompiled\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="MelonLoader">
       <HintPath>..\Master-Duels-BlindMode\libs\MelonLoader.dll</HintPath>
     </Reference>
