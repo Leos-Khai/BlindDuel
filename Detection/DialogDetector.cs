@@ -66,6 +66,7 @@ namespace BlindDuel
                         string announcement = ElementReader.FormatAnnouncement(title, body);
 
                         Log.Write($"[Dialog] Detected: {dialogRoot.name}/{dialogUI.name}");
+                        NavigationState.DialogJustAnnounced = true;
                         Speech.AnnounceScreen(announcement);
                         return;
                     }
@@ -104,6 +105,7 @@ namespace BlindDuel
 
                 string announcement = ElementReader.FormatAnnouncement(title, body);
                 Log.Write($"[Dialog-VC] {vc.name}: title='{title}', body='{body}'");
+                NavigationState.DialogJustAnnounced = true;
                 Speech.AnnounceScreen(announcement);
             }
             catch (Exception ex) { Log.Write($"[Dialog-VC] Error: {ex.Message}"); }

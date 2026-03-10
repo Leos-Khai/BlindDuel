@@ -66,11 +66,10 @@ namespace BlindDuel
                 string parentName = parent.name;
                 string grandparentName = grandparent.name;
 
-                // Duel card list — click and read card info
+                // Duel card list — click to trigger card info panel (SetDescriptionArea patch handles reading)
                 if (NavigationState.IsInDuel && parentName.Contains("DuelListCard"))
                 {
                     parent.GetComponent<SelectionButton>().Click();
-                    CardReader.ReadAndSpeak();
                     return;
                 }
 
@@ -177,8 +176,16 @@ namespace BlindDuel
 
             if (string.IsNullOrWhiteSpace(text)) return;
 
-            // Speak the item name (interrupts), then queue index after it
-            Speech.SayItem(text);
+            // After a dialog announcement, queue the auto-focused button instead of interrupting
+            if (NavigationState.DialogJustAnnounced)
+            {
+                NavigationState.DialogJustAnnounced = false;
+                Speech.SayQueued(text);
+            }
+            else
+            {
+                Speech.SayItem(text);
+            }
 
             var (index, total) = TransformSearch.GetButtonIndex(__instance);
             if (total > 1)
@@ -234,6 +241,7 @@ namespace BlindDuel
                 float delay = NavigationState.CurrentMenu == Menu.DuelPass ? 1.5f : 0.5f;
                 BlindDuelCore.Instance.Invoke(nameof(BlindDuelCore.ReadCardDelayed), delay);
             }
+
         }
     }
 

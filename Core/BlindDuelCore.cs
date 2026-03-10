@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using Il2CppYgomGame.Duel;
@@ -63,5 +65,47 @@ namespace BlindDuel
         {
             CardReader.ReadAndSpeak();
         }
+
+        /// <summary>
+        /// Invokable method for reading MDMarkup article content (notifications, news).
+        /// Called via debounced Invoke() from the MDMarkupBoardContainerWidget.OnStart patch.
+        /// Reads from the focused VC's hierarchy after content has settled.
+        /// </summary>
+        public void ReadMDMarkupContent()
+        {
+            try
+            {
+                var focusVC = ScreenDetector.GetFocusVC();
+                if (focusVC == null)
+                {
+                    Log.Write("[MDMarkup] No focused VC");
+                    return;
+                }
+
+                var texts = TextExtractor.ExtractAll(focusVC.gameObject, new TextSearchOptions
+                {
+                    ActiveOnly = true,
+                    FilterBanned = false,
+                    ExcludePathContaining = new List<string> { "SnapContent" },
+                    LogPrefix = "[MDMarkup]"
+                });
+
+                if (texts.Count == 0)
+                {
+                    Log.Write("[MDMarkup] No text found in focused VC");
+                    return;
+                }
+
+                var parts = new List<string>();
+                foreach (var r in texts)
+                    parts.Add(r.Text);
+
+                string announcement = string.Join(". ", parts);
+                Log.Write($"[MDMarkup] {announcement}");
+                Speech.AnnounceScreen(announcement);
+            }
+            catch (Exception ex) { Log.Write($"[MDMarkup] Error: {ex.Message}"); }
+        }
+
     }
 }

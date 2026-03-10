@@ -197,6 +197,9 @@ namespace BlindDuel
                 // Setup screens — skip announcement
                 if (cleanName is "GameEntryV1" or "GameEntrySequenceV2") return;
 
+                // MDMarkup articles load async — patched via OnCreatedMDMarkupAsset
+                if (cleanName == "MDMarkupAsset") return;
+
                 // Enquete loads async — poll in Update instead
                 if (cleanName == "Enquete")
                 {

@@ -45,13 +45,19 @@ namespace BlindDuel
     [HarmonyPatch(typeof(CardInfo), nameof(CardInfo.SetDescriptionArea))]
     class PatchCardInfoSetDescription
     {
+        private const float ReadDelay = 0.15f;
+
         [HarmonyPostfix]
         static void Postfix(CardInfo __instance)
         {
             try
             {
                 if (!__instance.gameObject.activeInHierarchy) return;
-                CardReader.ReadAndSpeak();
+
+                // Debounce: cancel any pending read and schedule a new one.
+                // SetDescriptionArea fires multiple times per card — only the last one reads.
+                BlindDuelCore.Instance.CancelInvoke(nameof(BlindDuelCore.ReadCardDelayed));
+                BlindDuelCore.Instance.Invoke(nameof(BlindDuelCore.ReadCardDelayed), ReadDelay);
             }
             catch (Exception ex)
             {

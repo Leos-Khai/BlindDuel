@@ -1,5 +1,8 @@
+using System;
+using System.Collections.Generic;
 using Il2CppYgomSystem.UI;
 using Il2CppYgomGame.Menu;
+using Il2CppYgomGame.MDMarkup;
 using HarmonyLib;
 
 namespace BlindDuel
@@ -36,6 +39,19 @@ namespace BlindDuel
             if (!string.IsNullOrEmpty(title))
                 Speech.AnnounceScreen(title);
             Log.Write("[Download] DownloadViewController created, tracking progress");
+        }
+    }
+
+    [HarmonyPatch(typeof(MDMarkupBoardContainerWidget), nameof(MDMarkupBoardContainerWidget.OnStart))]
+    class PatchMDMarkupBoardOnStart
+    {
+        [HarmonyPostfix]
+        static void Postfix()
+        {
+            // Debounce: multiple OnStart calls fire for cached pages.
+            // Only the last one (after all settle) triggers the actual read.
+            BlindDuelCore.Instance.CancelInvoke(nameof(BlindDuelCore.ReadMDMarkupContent));
+            BlindDuelCore.Instance.Invoke(nameof(BlindDuelCore.ReadMDMarkupContent), 0.3f);
         }
     }
 }

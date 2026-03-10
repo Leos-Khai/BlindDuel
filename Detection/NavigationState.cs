@@ -11,6 +11,7 @@ namespace BlindDuel
         public static string LastFocusVCName { get; set; } = "";
         public static string LastDialogTitle { get; set; } = "";
         public static bool IsInDuel { get; set; }
+        public static bool DialogJustAnnounced { get; set; }
 
         public static readonly Dictionary<string, Menu> VCNameToMenu = new()
         {
