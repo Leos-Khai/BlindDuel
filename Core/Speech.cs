@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Il2CppYgomSystem.UI;
 using MelonLoader;
 
 namespace BlindDuel
@@ -18,6 +19,7 @@ namespace BlindDuel
         private static readonly List<string> _history = new();
         private static string _lastSpoken = "";
         private static string _lastHeader = "";
+        private static SelectionButton _lastButton;
 
         public static IReadOnlyList<string> History => _history;
 
@@ -116,7 +118,20 @@ namespace BlindDuel
         }
 
         /// <summary>
-        /// Reset dedup tracking (call when a button is deselected).
+        /// Returns true if this button was already spoken for (duplicate fire).
+        /// </summary>
+        public static bool IsSameButton(SelectionButton button, bool peek = false)
+        {
+            if (button == _lastButton) return true;
+            if (!peek) _lastButton = button;
+            return false;
+        }
+
+        /// <summary>
+        /// Reset text dedup tracking (call when a button is deselected).
+        /// Note: _lastButton is NOT reset here — it persists across deselect/reselect
+        /// to catch the game's snap-settle pattern (rapid deselect+reselect of same button).
+        /// It naturally updates when a different button is selected.
         /// </summary>
         public static void ResetDedup()
         {

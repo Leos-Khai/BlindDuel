@@ -72,3 +72,14 @@ Game assemblies referenced from `../Master-Duels-BlindMode/libs/` (relative path
 - **`OnButtonFocused()`** — Return the COMPLETE speech text for the item: name + description/details + index. Use game data (widget properties, VC fields) for index rather than generic `TransformSearch.GetButtonIndex()`. Return `null` only for buttons that should use default behavior.
 - **One handler per screen** — Every navigable screen should have its own handler. The generic fallback in ScreenDetector is a discovery tool for unhandled screens, not a long-term solution.
 - **Use localized game data** — Read text from the game's own UI elements/properties. Never hardcode English strings for content the game provides in multiple languages.
+
+## Future Improvement: Detection & Patch Layer
+
+The current `ScreenDetector`, `ButtonPatches`, and `TransformSearch` layer has known hacky workarounds that should eventually be rewritten using proper game APIs from decompiled source:
+
+- **`PatchColorContainerGraphic`** hooks a low-level rendering method (`SetColor`) to detect button focus, with hardcoded parent name dictionaries. The game likely has proper selection/focus events.
+- **`QueueFocusedItem`** brute-force scans every `SelectionButton` in the scene to find the focused one. The game tracks this already.
+- **`TransformSearch.GetButtonIndex`** counts sibling buttons, which breaks for nested widget hierarchies (e.g. shop tabs where the button is inside a ShopTabWidget, not a sibling of other tabs).
+- **Screen/button timing** requires manual coordination (`HasPendingScreen`) because button focus patches fire independently of screen announcement readiness.
+
+Research the decompiled `SelectionButton`, `ViewControllerManager`, and `Selector` classes for cleaner alternatives that use the game's own focus tracking, selection indices, and screen lifecycle events.

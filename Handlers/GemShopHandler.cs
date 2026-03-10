@@ -36,20 +36,24 @@ namespace BlindDuel
                     var itemMap = widget.m_ItemWidgetMap;
                     if (itemMap != null)
                     {
-                        var enumerator = itemMap.GetEnumerator();
-                        while (enumerator.MoveNext())
-                        {
-                            var itemWidget = enumerator.Current.Value;
-                            string itemNum = itemWidget?.itemNumText?.text?.Trim();
-                            if (!string.IsNullOrEmpty(itemNum))
-                                result += $"\n{itemNum}";
-                        }
+                        ProductWidget.ItemWidget paidWidget = null;
+                        ProductWidget.ItemWidget freeWidget = null;
+                        itemMap.TryGetValue(0, out paidWidget);
+                        itemMap.TryGetValue(1, out freeWidget);
+
+                        string paidNum = paidWidget?.itemNumText?.text?.Trim();
+                        string freeNum = freeWidget?.itemNumText?.text?.Trim();
+
+                        if (!string.IsNullOrEmpty(paidNum))
+                            result += $"\n{paidNum} purchased";
+                        if (!string.IsNullOrEmpty(freeNum))
+                            result += $"\n{freeNum} free";
                     }
                 }
                 catch { }
 
                 // Purchase limit (e.g., "3 times remaining", "One-time opportunity!")
-                string limitText = widget.limitCountText?.text?.Trim();
+                string limitText = TextUtil.StripCJK(widget.limitCountText?.text?.Trim());
                 if (!string.IsNullOrEmpty(limitText))
                     result += $"\n{limitText}";
 
@@ -59,7 +63,7 @@ namespace BlindDuel
                     var popRoot = widget.popIconRoot;
                     if (popRoot != null && popRoot.activeInHierarchy)
                     {
-                        string popText = widget.popIconLabel?.text?.Trim();
+                        string popText = TextUtil.StripCJK(widget.popIconLabel?.text?.Trim());
                         if (!string.IsNullOrEmpty(popText))
                             result += $"\n{popText}";
                     }
@@ -80,7 +84,7 @@ namespace BlindDuel
                 catch { }
 
                 // Price
-                string price = widget.priceLabel?.text?.Trim();
+                string price = TextUtil.StripCJK(widget.priceLabel?.text?.Trim());
                 if (!string.IsNullOrEmpty(price))
                     result += $"\nPrice: {price}";
 

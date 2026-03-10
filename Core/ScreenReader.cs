@@ -92,6 +92,7 @@ namespace BlindDuel
         public static void Say(string text)
         {
             if (string.IsNullOrEmpty(text) || !_initialized) return;
+            text = TextUtil.FixPlurals(text);
             _lastMessage = text;
             try { Tolk_Output(text, true); }
             catch (Exception ex) { Log.Write($"[ScreenReader] Say error: {ex.Message}"); }
@@ -105,6 +106,7 @@ namespace BlindDuel
         public static void SayQueued(string text)
         {
             if (string.IsNullOrEmpty(text) || !_initialized) return;
+            text = TextUtil.FixPlurals(text);
             _lastMessage = text;
             try { Tolk_Output(text, false); }
             catch (Exception ex) { Log.Write($"[ScreenReader] SayQueued error: {ex.Message}"); }

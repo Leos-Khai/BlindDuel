@@ -41,6 +41,13 @@ namespace BlindDuel
         private static string _pendingCleanName;
 
         /// <summary>
+        /// True while a screen change has been detected but not yet announced
+        /// (waiting for IsReadyTransition + !isLoading). Button patches should
+        /// suppress speech during this window to avoid speaking items before the header.
+        /// </summary>
+        internal static bool HasPendingScreen => _pendingVC != null;
+
+        /// <summary>
         /// Called each frame. Checks for screen changes, polls async screens.
         /// </summary>
         public static void Poll()
@@ -262,7 +269,10 @@ namespace BlindDuel
                 // Let the handler announce if it wants to
                 var handler = HandlerRegistry.Current;
                 if (handler != null && handler.OnScreenEntered(cleanName))
+                {
+                    NavigationState.ScreenJustAnnounced = true;
                     return;
+                }
 
                 // Standard screen: combine header + title
                 string headerText = ReadGameHeaderText();
@@ -284,6 +294,7 @@ namespace BlindDuel
 
                 Log.Write($"[ScreenChange] {cleanName} | header='{headerText}', title='{titleText}'");
                 Speech.AnnounceScreen(announcement);
+                NavigationState.ScreenJustAnnounced = true;
 
                 // Queue the currently focused button so user knows where they are
                 var contentCanvas = GameObject.Find("UI/ContentCanvas");

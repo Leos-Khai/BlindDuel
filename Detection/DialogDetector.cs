@@ -40,6 +40,9 @@ namespace BlindDuel
                         string dialogKey = dialogUI.name.EndsWith("(Clone)") ? dialogUI.name[..^7] : dialogUI.name;
                         if (dialogKey == NavigationState.LastDialogTitle) return;
 
+                        // CardBrowserUI is the card detail overlay — CardReader handles it
+                        if (dialogKey == "CardBrowserUI") continue;
+
                         var texts = TextExtractor.ExtractAll(dialogUI.gameObject, new TextSearchOptions
                         {
                             ActiveOnly = true,

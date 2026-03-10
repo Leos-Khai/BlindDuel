@@ -156,8 +156,19 @@ namespace BlindDuel
         }
 
         [HarmonyPostfix]
-        static void Postfix(SelectionButton __instance)
+        static void Postfix(SelectionButton __instance, bool __result)
         {
+            // OnSelected returns false when the button was already selected — skip duplicate fires
+            if (!__result) return;
+
+            // Same button re-fired (rapid deselect/reselect) — skip to prevent
+            // handler state mutation producing different text on second fire
+            if (Speech.IsSameButton(__instance)) return;
+
+            // Suppress button speech while a screen announcement is pending
+            // (screen not yet ready — avoids speaking items before the header)
+            if (ScreenDetector.HasPendingScreen) return;
+
             // Extract text from button hierarchy
             string text = TextExtractor.ExtractFirst(__instance.gameObject);
 
@@ -185,10 +196,11 @@ namespace BlindDuel
                     text += $"\n{index} of {total}";
             }
 
-            // After a dialog announcement, queue the auto-focused button instead of interrupting
-            if (NavigationState.DialogJustAnnounced)
+            // After a screen/dialog announcement, queue the auto-focused button instead of interrupting
+            if (NavigationState.DialogJustAnnounced || NavigationState.ScreenJustAnnounced)
             {
                 NavigationState.DialogJustAnnounced = false;
+                NavigationState.ScreenJustAnnounced = false;
                 Speech.SayQueued(text);
             }
             else
