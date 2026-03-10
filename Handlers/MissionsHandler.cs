@@ -47,7 +47,12 @@ namespace BlindDuel
                     timeText = TextExtractor.ExtractFirst(timeChild.gameObject, new TextSearchOptions { FilterBanned = false }) ?? "None";
 
                 string result = missionName ?? "";
-                Speech.SayDescription($"Reward: {rewardText}\nTime left: {timeText}");
+                result += $"\nReward: {rewardText}\nTime left: {timeText}";
+
+                var (index, total) = TransformSearch.GetButtonIndex(button);
+                if (total > 1)
+                    result += $"\n{index} of {total}";
+
                 return result;
             }
             catch (System.Exception ex)

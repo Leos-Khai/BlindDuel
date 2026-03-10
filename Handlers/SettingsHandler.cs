@@ -37,11 +37,9 @@ namespace BlindDuel
             }
 
             if (!string.IsNullOrEmpty(baseText) && !string.IsNullOrEmpty(value))
-            {
-                Speech.SayDescription($"Value is {value}");
-            }
+                return $"{baseText}\nValue is {value}";
 
-            return null; // Let default text speak, we queue the value after
+            return null;
         }
     }
 }

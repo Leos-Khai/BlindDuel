@@ -19,11 +19,11 @@ Each screen/menu has its own handler class implementing `IMenuHandler`. The `Han
 
 ### Speech Flow (Tolk API)
 - `Speech.AnnounceScreen()` — interrupt, screen/menu changes
-- `Speech.SayItem()` — interrupt, item navigation
-- `Speech.SayIndex()` — queued after item name ("2 of 5")
-- `Speech.SayDescription()` — queued after item + index (help text, details)
+- `Speech.SayItem()` — interrupt, item navigation (includes description + index as one utterance)
 - `Speech.SayQueued()` — queued, supplementary info
 - `Speech.SayImmediate()` — interrupt, urgent (LP changes)
+
+**Important:** Each item should be spoken as ONE complete utterance: item name + details + index. Do NOT use separate `SayDescription()` or `SayIndex()` calls — combine everything into the text returned from `OnButtonFocused()`.
 
 ### File Structure
 - **Core/** — Plugin.cs (MelonMod entry), BlindDuelCore.cs (MonoBehaviour singleton), Speech.cs (speech coordination), ScreenReader.cs (Tolk P/Invoke)
@@ -62,6 +62,13 @@ Game assemblies referenced from `../Master-Duels-BlindMode/libs/` (relative path
 
 ## Adding a New Screen
 
-1. Create `Handlers/MyNewHandler.cs`
-2. Implement `IMenuHandler`: `CanHandle()`, `OnScreenEntered()`, `OnButtonFocused()`
-3. Build. The registry auto-discovers it. No other files need changes.
+1. **Research first** — Read the decompiled game code for the screen's ViewController, widget classes, and data models. Understand what properties/fields are available (item names, indices, counts, details).
+2. Create `Handlers/MyNewHandler.cs`
+3. Implement `IMenuHandler`: `CanHandle()`, `OnScreenEntered()`, `OnButtonFocused()`
+4. Build. The registry auto-discovers it. No other files need changes.
+
+### Handler Responsibilities
+- **`OnScreenEntered()`** — Called only after screen is fully loaded (`IsReadyTransition` + `!isLoading`). Read the localized header via `ScreenDetector.ReadGameHeaderText()` when possible. Return `true` to suppress generic announcement.
+- **`OnButtonFocused()`** — Return the COMPLETE speech text for the item: name + description/details + index. Use game data (widget properties, VC fields) for index rather than generic `TransformSearch.GetButtonIndex()`. Return `null` only for buttons that should use default behavior.
+- **One handler per screen** — Every navigable screen should have its own handler. The generic fallback in ScreenDetector is a discovery tool for unhandled screens, not a long-term solution.
+- **Use localized game data** — Read text from the game's own UI elements/properties. Never hardcode English strings for content the game provides in multiple languages.

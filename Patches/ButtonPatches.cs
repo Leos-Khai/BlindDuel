@@ -166,15 +166,24 @@ namespace BlindDuel
                 text = FindSiblingText(__instance.transform) ?? text;
 
             // Let the active handler enhance the text
+            string enhanced = null;
             var handler = HandlerRegistry.Current;
             if (handler != null)
             {
-                string enhanced = handler.OnButtonFocused(__instance);
+                enhanced = handler.OnButtonFocused(__instance);
                 if (enhanced != null)
                     text = enhanced;
             }
 
             if (string.IsNullOrWhiteSpace(text)) return;
+
+            // If handler didn't provide text, use generic index as fallback
+            if (enhanced == null)
+            {
+                var (index, total) = TransformSearch.GetButtonIndex(__instance);
+                if (total > 1)
+                    text += $"\n{index} of {total}";
+            }
 
             // After a dialog announcement, queue the auto-focused button instead of interrupting
             if (NavigationState.DialogJustAnnounced)
@@ -186,10 +195,6 @@ namespace BlindDuel
             {
                 Speech.SayItem(text);
             }
-
-            var (index, total) = TransformSearch.GetButtonIndex(__instance);
-            if (total > 1)
-                Speech.SayIndex(index, total);
         }
     }
 

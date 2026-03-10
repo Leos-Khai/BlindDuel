@@ -12,6 +12,7 @@ namespace BlindDuel
     /// <summary>
     /// Detects ViewController changes, announces screen headers,
     /// and queues the currently focused button text.
+    /// Defers announcements until the screen is fully loaded (isLoading == false).
     /// </summary>
     public static class ScreenDetector
     {
@@ -35,12 +36,17 @@ namespace BlindDuel
         private static DownloadViewController _activeDownloadVC;
         private static int _lastDownloadPercent = -1;
 
+        // Deferred screen announcement — wait for screen to finish loading
+        private static ViewController _pendingVC;
+        private static string _pendingCleanName;
+
         /// <summary>
         /// Called each frame. Checks for screen changes, polls async screens.
         /// </summary>
         public static void Poll()
         {
             CheckScreenChange();
+            CheckPendingAnnouncement();
             CheckEnqueteScreen();
             CheckDownloadProgress();
         }
@@ -153,10 +159,17 @@ namespace BlindDuel
 
                 // Try the labeled element first
                 string text = ElementReader.GetElementText(eom, labelKey);
-                if (!string.IsNullOrWhiteSpace(text)) return text;
+                if (!string.IsNullOrWhiteSpace(text) && !IsNumericOnly(text)) return text;
 
-                // Fallback: first active text in the header
-                return TextExtractor.ExtractFirst(eom.gameObject, new TextSearchOptions { ActiveOnly = true, FilterBanned = false });
+                // Fallback: first non-numeric active text in the header
+                // (skip gem count which is always numeric)
+                var results = TextExtractor.ExtractAll(eom.gameObject, new TextSearchOptions { ActiveOnly = true, FilterBanned = false });
+                foreach (var r in results)
+                {
+                    if (!string.IsNullOrWhiteSpace(r.Text) && !IsNumericOnly(r.Text))
+                        return r.Text;
+                }
+                return null;
             }
             catch (Exception ex)
             {
@@ -179,6 +192,10 @@ namespace BlindDuel
             }
         }
 
+        /// <summary>
+        /// Detect VC changes immediately (update state, context, handler),
+        /// but defer the actual announcement until the screen is loaded.
+        /// </summary>
         private static void CheckScreenChange()
         {
             try
@@ -208,6 +225,40 @@ namespace BlindDuel
                     return;
                 }
 
+                // Defer announcement until screen is ready
+                _pendingVC = focusVC;
+                _pendingCleanName = cleanName;
+            }
+            catch (Exception ex) { Log.Write($"[CheckScreenChange] {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Poll the pending screen until transitions are done and data is loaded, then announce.
+        /// </summary>
+        private static void CheckPendingAnnouncement()
+        {
+            if (_pendingVC == null) return;
+
+            try
+            {
+                // Wait for all transitions to complete (enter animations, fades, etc.)
+                var contentManager = GameObject.Find("UI/ContentCanvas/ContentManager");
+                if (contentManager == null) return;
+                var vcm = contentManager.GetComponent<ViewControllerManager>();
+                if (vcm != null && !vcm.IsReadyTransition())
+                    return; // Transitions still playing — check next frame
+
+                // Also wait for async data loading to finish
+                var baseVC = _pendingVC.TryCast<BaseMenuViewController>();
+                if (baseVC != null && baseVC.isLoading)
+                    return; // Still loading data — check next frame
+
+                // Screen is fully ready
+                var vc = _pendingVC;
+                var cleanName = _pendingCleanName;
+                _pendingVC = null;
+                _pendingCleanName = null;
+
                 // Let the handler announce if it wants to
                 var handler = HandlerRegistry.Current;
                 if (handler != null && handler.OnScreenEntered(cleanName))
@@ -215,7 +266,7 @@ namespace BlindDuel
 
                 // Standard screen: combine header + title
                 string headerText = ReadGameHeaderText();
-                string titleText = FindScreenTitle(focusVC);
+                string titleText = FindScreenTitle(vc);
 
                 string announcement = (headerText, titleText) switch
                 {
@@ -236,9 +287,9 @@ namespace BlindDuel
 
                 // Queue the currently focused button so user knows where they are
                 var contentCanvas = GameObject.Find("UI/ContentCanvas");
-                QueueFocusedItem(contentCanvas?.gameObject ?? focusVC.gameObject);
+                QueueFocusedItem(contentCanvas?.gameObject ?? vc.gameObject);
             }
-            catch (Exception ex) { Log.Write($"[CheckScreenChange] {ex.Message}"); }
+            catch (Exception ex) { Log.Write($"[CheckPendingAnnouncement] {ex.Message}"); }
         }
 
         private static void CheckEnqueteScreen()
@@ -351,16 +402,25 @@ namespace BlindDuel
                         string btnText = TextExtractor.ExtractFirst(btn.gameObject);
                         if (!string.IsNullOrWhiteSpace(btnText))
                         {
-                            Speech.SayQueued(btnText);
                             var (index, total) = TransformSearch.GetButtonIndex(btn);
                             if (total > 1)
-                                Speech.SayIndex(index, total);
+                                btnText += $"\n{index} of {total}";
+                            Speech.SayQueued(btnText);
                         }
                         return;
                     }
                 }
             }
             catch (Exception ex) { Log.Write($"[QueueFocusedItem] {ex.Message}"); }
+        }
+
+        private static bool IsNumericOnly(string text)
+        {
+            foreach (char c in text.Trim())
+            {
+                if (c < '0' || c > '9') return false;
+            }
+            return text.Trim().Length > 0;
         }
     }
 }

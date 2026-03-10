@@ -40,9 +40,11 @@ namespace BlindDuel
 
                     // Append gate overview from captured data
                     if (!string.IsNullOrEmpty(gateName) && SoloState.GateOverviews.TryGetValue(gateName, out string overview))
-                    {
-                        Speech.SayDescription(TextUtil.StripTags(overview).Trim());
-                    }
+                        result += $"\n{TextUtil.StripTags(overview).Trim()}";
+
+                    var (index, total) = TransformSearch.GetButtonIndex(button);
+                    if (total > 1)
+                        result += $"\n{index} of {total}";
 
                     return result;
                 }

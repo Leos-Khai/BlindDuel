@@ -40,8 +40,13 @@ namespace BlindDuel
 
                 string itemName = $"{pickup}{(pickup != "" ? " - " : "")}{name}{(isNew != "" ? $" ({isNew})" : "")}";
 
-                Speech.SayDescription($"Category: {category}\nTime left: {limit}\nPrice: {price}");
-                return itemName;
+                string result = $"{itemName}\nCategory: {category}\nTime left: {limit}\nPrice: {price}";
+
+                var (index, total) = TransformSearch.GetButtonIndex(button);
+                if (total > 1)
+                    result += $"\n{index} of {total}";
+
+                return result;
             }
 
             // Individual card in pack

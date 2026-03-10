@@ -1,4 +1,5 @@
 using Il2CppYgomSystem.UI;
+using Il2CppYgomGame.Menu;
 using UnityEngine;
 
 namespace BlindDuel
@@ -7,10 +8,27 @@ namespace BlindDuel
     {
         public bool CanHandle(string viewControllerName) => viewControllerName == "Home";
 
-        public bool OnScreenEntered(string viewControllerName) => false;
+        public bool OnScreenEntered(string viewControllerName)
+        {
+            Speech.AnnounceScreen("Home");
+            return true;
+        }
 
         public string OnButtonFocused(SelectionButton button)
         {
+            // Gem button — append "gems" label
+            try
+            {
+                var headerVC = HeaderViewController.instance;
+                if (headerVC != null && headerVC.BtnGem == button)
+                {
+                    string gemText = TextExtractor.ExtractFirst(button.gameObject);
+                    if (!string.IsNullOrEmpty(gemText))
+                        return $"{gemText} gems";
+                }
+            }
+            catch { }
+
             // Profile button — append player level
             if (button.name == "ButtonPlayer")
             {
