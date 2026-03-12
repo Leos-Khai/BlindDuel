@@ -7,6 +7,8 @@ namespace BlindDuel
     [HarmonyPatch(typeof(ScenarioBehaviour_Text), nameof(ScenarioBehaviour_Text.ProgressInit))]
     class PatchScenarioText
     {
+        static string _lastText = "";
+
         [HarmonyPostfix]
         static void Postfix(ScenarioBehaviour_Text __instance)
         {
@@ -17,17 +19,23 @@ namespace BlindDuel
 
                 text = TextUtil.StripTags(text).Trim();
                 if (string.IsNullOrWhiteSpace(text)) return;
+                if (text == _lastText) return;
 
+                _lastText = text;
                 Log.Write($"[Scenario] Text: {text}");
                 Speech.SayQueued(text);
             }
             catch { }
         }
+
+        public static void Reset() => _lastText = "";
     }
 
     [HarmonyPatch(typeof(ScenarioBehaviour_Title), nameof(ScenarioBehaviour_Title.ProgressInit))]
     class PatchScenarioTitle
     {
+        static string _lastTitle = "";
+
         [HarmonyPostfix]
         static void Postfix(ScenarioBehaviour_Title __instance)
         {
@@ -38,12 +46,16 @@ namespace BlindDuel
 
                 title = TextUtil.StripTags(title).Trim();
                 if (string.IsNullOrWhiteSpace(title)) return;
+                if (title == _lastTitle) return;
 
+                _lastTitle = title;
                 Log.Write($"[Scenario] Title: {title}");
                 Speech.SayQueued(title);
             }
             catch { }
         }
+
+        public static void Reset() => _lastTitle = "";
     }
 
     /// <summary>
@@ -99,8 +111,9 @@ namespace BlindDuel
         [HarmonyPostfix]
         static void Postfix()
         {
+            PatchScenarioText.Reset();
+            PatchScenarioTitle.Reset();
             PatchMovieMarkerCallback.Reset();
-            Log.Write("[Scenario] Movie finished, subtitle state reset");
         }
     }
 
