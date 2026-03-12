@@ -26,6 +26,7 @@ namespace BlindDuel
             { "DuelLive", Menu.Duel },
             { "DeckEdit", Menu.Deck },
             { "DeckBrowser", Menu.Deck },
+            { "DeckSelect", Menu.Deck },
             { "Shop", Menu.Shop },
             { "SettingMenuViewController", Menu.Settings },
         };
@@ -39,6 +40,10 @@ namespace BlindDuel
         // Deferred screen announcement — wait for screen to finish loading
         private static ViewController _pendingVC;
         private static string _pendingCleanName;
+
+        // Button selected during pending screen — captured from OnSelected patch,
+        // used by QueueFocusedItem after screen announcement
+        private static SelectionButton _deferredButton;
 
         /// <summary>
         /// True while a screen change has been detected but not yet announced
@@ -252,6 +257,7 @@ namespace BlindDuel
                 // Defer announcement until screen is ready
                 _pendingVC = focusVC;
                 _pendingCleanName = cleanName;
+                _deferredButton = null;
             }
             catch (Exception ex) { Log.Write($"[CheckScreenChange] {ex.Message}"); }
         }
@@ -290,8 +296,7 @@ namespace BlindDuel
                     NavigationState.ScreenJustAnnounced = true;
 
                     // Also queue focused item so user knows where they are
-                    var canvas = GameObject.Find("UI/ContentCanvas");
-                    QueueFocusedItem(canvas?.gameObject ?? vc.gameObject);
+                    QueueFocusedItem();
                     return;
                 }
 
@@ -318,8 +323,7 @@ namespace BlindDuel
                 NavigationState.ScreenJustAnnounced = true;
 
                 // Queue the currently focused button so user knows where they are
-                var contentCanvas = GameObject.Find("UI/ContentCanvas");
-                QueueFocusedItem(contentCanvas?.gameObject ?? vc.gameObject);
+                QueueFocusedItem();
             }
             catch (Exception ex) { Log.Write($"[CheckPendingAnnouncement] {ex.Message}"); }
         }
@@ -370,7 +374,7 @@ namespace BlindDuel
 
                 string announcement = string.Join(". ", texts) + $". {pageText}";
                 Speech.AnnounceScreen(announcement);
-                QueueFocusedItem(focusVC.gameObject);
+                QueueFocusedItem();
             }
             catch (Exception ex) { Log.Write($"[Enquete] Error: {ex.Message}"); }
         }
@@ -415,45 +419,51 @@ namespace BlindDuel
         }
 
         /// <summary>
-        /// After a screen header, queue the focused button text so the user knows where they are.
+        /// Called from PatchOnSelected when HasPendingScreen is true.
+        /// Captures the button so QueueFocusedItem can use it after the screen is announced.
         /// </summary>
-        internal static void QueueFocusedItem(GameObject root)
+        internal static void DeferFocusedButton(SelectionButton btn) => _deferredButton = btn;
+
+        /// <summary>
+        /// After a screen header, queue the focused button text so the user knows where they are.
+        /// Uses SelectorManager.currentItem, falling back to the deferred button captured
+        /// from OnSelected during the pending screen window.
+        /// </summary>
+        internal static void QueueFocusedItem()
         {
             try
             {
-                var buttons = root.GetComponentsInChildren<SelectionButton>();
-                if (buttons == null) return;
+                SelectionButton btn = null;
 
-                foreach (var btn in buttons)
+                var selectedItem = SelectorManager.currentItem;
+                if (selectedItem != null)
+                    btn = selectedItem.TryCast<SelectionButton>();
+
+                // Fallback: button captured from OnSelected during pending screen
+                if (btn == null)
+                    btn = _deferredButton;
+                _deferredButton = null;
+
+                if (btn == null || btn.WasCollected || !btn.gameObject.activeInHierarchy) return;
+
+                string btnText = null;
+                var activeHandler = HandlerRegistry.Current;
+                if (activeHandler != null)
+                    btnText = activeHandler.OnButtonFocused(btn);
+
+                if (string.IsNullOrWhiteSpace(btnText))
                 {
-                    if (btn == null || !btn.gameObject.activeInHierarchy) continue;
-
-                    var colorContainer = btn.GetComponentInChildren<ColorContainerGraphic>();
-                    if (colorContainer != null && colorContainer.currentStatusMode == ColorContainer.StatusMode.Enter)
+                    btnText = TextExtractor.ExtractFirst(btn.gameObject);
+                    if (!string.IsNullOrWhiteSpace(btnText))
                     {
-                        // Try handler first for proper item text
-                        string btnText = null;
-                        var activeHandler = HandlerRegistry.Current;
-                        if (activeHandler != null)
-                            btnText = activeHandler.OnButtonFocused(btn);
-
-                        // Fallback to raw text + generic index
-                        if (string.IsNullOrWhiteSpace(btnText))
-                        {
-                            btnText = TextExtractor.ExtractFirst(btn.gameObject);
-                            if (!string.IsNullOrWhiteSpace(btnText))
-                            {
-                                var (index, total) = TransformSearch.GetButtonIndex(btn);
-                                if (total > 1)
-                                    btnText += $"\n{index} of {total}";
-                            }
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(btnText))
-                            Speech.SayQueued(btnText);
-                        return;
+                        var (index, total) = TransformSearch.GetButtonIndex(btn);
+                        if (total > 1)
+                            btnText += $"\n{index} of {total}";
                     }
                 }
+
+                if (!string.IsNullOrWhiteSpace(btnText))
+                    Speech.SayQueued(btnText);
             }
             catch (Exception ex) { Log.Write($"[QueueFocusedItem] {ex.Message}"); }
         }

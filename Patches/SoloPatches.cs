@@ -23,4 +23,20 @@ namespace BlindDuel
             SoloState.CaptureGateData(gateManager, "UpdateData");
         }
     }
+
+    /// <summary>
+    /// When the Solo chapter access dialog (Play/Skip/Deck overlay) closes,
+    /// re-announce the focused chapter node since it's the same VC — no screen change fires.
+    /// </summary>
+    [HarmonyPatch(typeof(SoloSelectChapterViewController.AccessDialogManager),
+        nameof(SoloSelectChapterViewController.AccessDialogManager.CloseAccessDialog))]
+    class PatchSoloAccessDialogClose
+    {
+        [HarmonyPostfix]
+        static void Postfix()
+        {
+            try { ScreenDetector.QueueFocusedItem(); }
+            catch (Exception ex) { Log.Write($"[SoloDialogClose] {ex.Message}"); }
+        }
+    }
 }

@@ -165,9 +165,13 @@ namespace BlindDuel
             // handler state mutation producing different text on second fire
             if (Speech.IsSameButton(__instance)) return;
 
-            // Suppress button speech while a screen announcement is pending
-            // (screen not yet ready — avoids speaking items before the header)
-            if (ScreenDetector.HasPendingScreen) return;
+            // Screen announcement pending — capture the button for QueueFocusedItem
+            // instead of speaking now (avoids speaking items before the header)
+            if (ScreenDetector.HasPendingScreen)
+            {
+                ScreenDetector.DeferFocusedButton(__instance);
+                return;
+            }
 
             // Game-native transition check: suppress buttons that fire during
             // screen transitions (e.g. brief OK button during gate entry).
