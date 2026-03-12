@@ -10,7 +10,7 @@ namespace BlindDuel
         [HarmonyPostfix]
         static void Postfix(SoloGateUtil.GateManager gateManager)
         {
-            SoloState.CaptureGateOverviews(gateManager, "InitData");
+            SoloState.CaptureGateData(gateManager, "InitData");
         }
     }
 
@@ -20,7 +20,7 @@ namespace BlindDuel
         [HarmonyPostfix]
         static void Postfix(SoloGateUtil.GateManager gateManager)
         {
-            SoloState.CaptureGateOverviews(gateManager, "UpdateData");
+            SoloState.CaptureGateData(gateManager, "UpdateData");
         }
     }
 }

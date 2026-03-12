@@ -169,6 +169,12 @@ namespace BlindDuel
             // (screen not yet ready — avoids speaking items before the header)
             if (ScreenDetector.HasPendingScreen) return;
 
+            // Game-native transition check: suppress buttons that fire during
+            // screen transitions (e.g. brief OK button during gate entry).
+            // This catches transition artifacts that HasPendingScreen misses
+            // because our Poll() hasn't detected the VC change yet.
+            if (!ScreenDetector.IsScreenReady()) return;
+
             // Extract text from button hierarchy
             string text = TextExtractor.ExtractFirst(__instance.gameObject);
 

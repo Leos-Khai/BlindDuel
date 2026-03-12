@@ -68,6 +68,23 @@ namespace BlindDuel
             _lastDownloadPercent = -1;
         }
 
+        /// <summary>
+        /// Direct game-native check: are all screen transitions complete?
+        /// More reliable than HasPendingScreen for real-time checks in patches,
+        /// since it doesn't depend on our Poll() timing.
+        /// </summary>
+        internal static bool IsScreenReady()
+        {
+            try
+            {
+                var contentManager = GameObject.Find("UI/ContentCanvas/ContentManager");
+                if (contentManager == null) return true;
+                var vcm = contentManager.GetComponent<ViewControllerManager>();
+                return vcm == null || vcm.IsReadyTransition();
+            }
+            catch { return true; }
+        }
+
         internal static ViewController GetFocusVC()
         {
             var contentManager = GameObject.Find("UI/ContentCanvas/ContentManager");
@@ -218,8 +235,8 @@ namespace BlindDuel
                 UpdateMenuContext(cleanName);
                 HandlerRegistry.SetCurrentFromVC(cleanName);
 
-                // Setup screens — skip announcement
-                if (cleanName is "GameEntryV1" or "GameEntrySequenceV2") return;
+                // Setup screens and movie playback — skip announcement
+                if (cleanName is "GameEntryV1" or "GameEntrySequenceV2" or "Scenario") return;
 
                 // MDMarkup articles load async — patched via OnCreatedMDMarkupAsset
                 if (cleanName == "MDMarkupAsset") return;
@@ -271,6 +288,10 @@ namespace BlindDuel
                 if (handler != null && handler.OnScreenEntered(cleanName))
                 {
                     NavigationState.ScreenJustAnnounced = true;
+
+                    // Also queue focused item so user knows where they are
+                    var canvas = GameObject.Find("UI/ContentCanvas");
+                    QueueFocusedItem(canvas?.gameObject ?? vc.gameObject);
                     return;
                 }
 
@@ -410,14 +431,26 @@ namespace BlindDuel
                     var colorContainer = btn.GetComponentInChildren<ColorContainerGraphic>();
                     if (colorContainer != null && colorContainer.currentStatusMode == ColorContainer.StatusMode.Enter)
                     {
-                        string btnText = TextExtractor.ExtractFirst(btn.gameObject);
-                        if (!string.IsNullOrWhiteSpace(btnText))
+                        // Try handler first for proper item text
+                        string btnText = null;
+                        var activeHandler = HandlerRegistry.Current;
+                        if (activeHandler != null)
+                            btnText = activeHandler.OnButtonFocused(btn);
+
+                        // Fallback to raw text + generic index
+                        if (string.IsNullOrWhiteSpace(btnText))
                         {
-                            var (index, total) = TransformSearch.GetButtonIndex(btn);
-                            if (total > 1)
-                                btnText += $"\n{index} of {total}";
-                            Speech.SayQueued(btnText);
+                            btnText = TextExtractor.ExtractFirst(btn.gameObject);
+                            if (!string.IsNullOrWhiteSpace(btnText))
+                            {
+                                var (index, total) = TransformSearch.GetButtonIndex(btn);
+                                if (total > 1)
+                                    btnText += $"\n{index} of {total}";
+                            }
                         }
+
+                        if (!string.IsNullOrWhiteSpace(btnText))
+                            Speech.SayQueued(btnText);
                         return;
                     }
                 }
