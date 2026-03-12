@@ -10,9 +10,16 @@ namespace BlindDuel
     {
         public static List<CardRoot> Cards { get; } = new();
 
+        /// <summary>
+        /// True between DuelEndOperation.Setup and DuelEndMessage.Setup —
+        /// the duel result animation is playing and buttons should not speak yet.
+        /// </summary>
+        public static bool IsShowingResult { get; set; }
+
         public static void Clear()
         {
             Cards.Clear();
+            IsShowingResult = false;
         }
 
         public static CardRoot FindCardAtPosition(UnityEngine.Vector3 position)

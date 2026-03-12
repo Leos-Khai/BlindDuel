@@ -255,8 +255,9 @@ namespace BlindDuel
 
         /// <summary>
         /// Read card and speak it. Used by hotkey and patches.
+        /// Returns true if a card was actually spoken.
         /// </summary>
-        public static void ReadAndSpeak()
+        public static bool ReadAndSpeak()
         {
             BlindDuelCore.Preview.Clear();
             var card = ReadCurrentCard();
@@ -265,8 +266,17 @@ namespace BlindDuel
                 trimAttributes: NavigationState.CurrentMenu == Menu.Deck
             );
 
-            if (!string.IsNullOrEmpty(formatted))
-                Speech.SayItem(formatted);
+            if (string.IsNullOrEmpty(formatted)) return false;
+
+            // During duels, suppress re-reading the same card (e.g. summon/set triggers SetDescriptionArea again)
+            if (NavigationState.IsInDuel && PatchCardInfoSetDescription.CheckAndUpdateDedup(card.Name))
+            {
+                Log.Write($"[CardReader] Suppressed duplicate read: {card.Name}");
+                return false;
+            }
+
+            Speech.SayItem(formatted);
+            return true;
         }
 
         /// <summary>

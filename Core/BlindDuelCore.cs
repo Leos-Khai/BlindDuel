@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using Il2CppYgomGame.Duel;
-using MelonLoader;
 
 namespace BlindDuel
 {
@@ -34,10 +32,9 @@ namespace BlindDuel
             {
                 if (Input.GetKeyDown(KeyCode.Space))
                 {
-                    var duelLPs = FindObjectsOfType<DuelLP>().ToList();
-                    var near = duelLPs.Find(e => e.m_IsNear);
-                    var far = duelLPs.Find(e => !e.m_IsNear);
-                    Speech.SayImmediate($"Your life points: {near?.currentLP}\nOpponent's life points: {far?.currentLP}");
+                    int myLP = DuelClient.GetLP(0);
+                    int oppLP = DuelClient.GetLP(1);
+                    Speech.SayImmediate($"Your life points: {myLP}\nOpponent's life points: {oppLP}");
                 }
 
                 if (Input.GetKeyDown(KeyCode.LeftAlt))
@@ -60,10 +57,22 @@ namespace BlindDuel
 
         /// <summary>
         /// Invokable card reading method — used with MonoBehaviour.Invoke() for delayed reads.
+        /// Also handles pending zone announcements from DuelHandler:
+        /// - If a card was spoken, zone queues after it (SayQueued)
+        /// - If no card (empty zone), zone speaks immediately (SayItem)
         /// </summary>
         public void ReadCardDelayed()
         {
-            CardReader.ReadAndSpeak();
+            bool cardSpoken = CardReader.ReadAndSpeak();
+
+            string zone = DuelHandler.ConsumePendingZone();
+            if (!string.IsNullOrEmpty(zone))
+            {
+                if (cardSpoken)
+                    Speech.SayQueued(zone);
+                else
+                    Speech.SayItem(zone);
+            }
         }
 
         /// <summary>

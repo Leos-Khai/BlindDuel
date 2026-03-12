@@ -42,7 +42,7 @@ namespace BlindDuel
         {
             if (string.IsNullOrWhiteSpace(Name)) return "";
 
-            var parts = new List<string> { $"Name: {Name}" };
+            var parts = new List<string> { Name };
 
             if (!string.IsNullOrEmpty(Atk)) parts.Add($"Attack: {Atk}");
             if (!string.IsNullOrEmpty(Link))

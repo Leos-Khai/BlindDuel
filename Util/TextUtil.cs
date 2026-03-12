@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using Il2CppYgomGame.Card;
 using UnityEngine;
 
 namespace BlindDuel
@@ -8,6 +10,8 @@ namespace BlindDuel
     {
         private static readonly HashSet<string> BannedTexts = new() { "00:00", "You can add new Cards to your Deck." };
 
+        // Matches <card mrk = '12345'/> tags (self-closing, card name placeholder)
+        private static readonly Regex CardTagPattern = new(@"<card\s+mrk\s*=\s*'(\d+)'\s*/>", RegexOptions.Compiled);
         private static readonly Regex TagPattern = new(@"<[^>]+>", RegexOptions.Compiled);
         private static readonly Regex WhitespaceOnly = new(@"^\s*$", RegexOptions.Compiled);
         private static readonly Regex WhitespaceOrPunctuation = new(@"^\s*$|[.!]+$", RegexOptions.Compiled);
@@ -19,7 +23,40 @@ namespace BlindDuel
         public static string StripTags(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
+            // Resolve <card mrk='XXXX'/> tags to actual card names before stripping
+            text = ResolveCardTags(text);
             return TagPattern.Replace(text, "");
+        }
+
+        /// <summary>
+        /// Replace <card mrk='XXXX'/> self-closing tags with the actual card name from Content.
+        /// </summary>
+        private static string ResolveCardTags(string text)
+        {
+            return CardTagPattern.Replace(text, new MatchEvaluator(ResolveCardTagMatch));
+        }
+
+        private static string ResolveCardTagMatch(Match match)
+        {
+            try
+            {
+                string mrkStr = match.Groups[1].Value;
+                if (int.TryParse(mrkStr, out int mrk))
+                {
+                    var content = Content.s_instance;
+                    if (content != null)
+                    {
+                        string name = content.GetName(mrk);
+                        if (!string.IsNullOrEmpty(name))
+                            return name;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"[TextUtil] ResolveCardTag error: {ex.Message}");
+            }
+            return "";
         }
 
         /// <summary>
