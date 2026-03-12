@@ -1,4 +1,5 @@
 using System;
+using Il2CppYgomGame.Card;
 using Il2CppYgomGame.Shop;
 using Il2CppYgomSystem.UI;
 
@@ -92,6 +93,50 @@ namespace BlindDuel
                                 if (!string.IsNullOrEmpty(text))
                                     return text;
                             }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // Try highlight card thumbnails (featured cards at bottom)
+            try
+            {
+                var focusVC = ScreenDetector.GetFocusVC();
+                var buyVC = focusVC?.TryCast<ShopBuyViewController>();
+                var thumbs = buyVC?.m_HighlightWidget?.m_ThumbWidgets;
+                var mrks = buyVC?.m_CardBrowseMrks;
+                var rares = buyVC?.m_CardBrowseRareList;
+
+                if (thumbs != null)
+                {
+                    for (int i = 0; i < thumbs.Count; i++)
+                    {
+                        var thumb = thumbs[i];
+                        if (thumb?.button == button)
+                        {
+                            string result = "";
+                            int mrk = (mrks != null && i < mrks.Count) ? mrks[i] : 0;
+                            if (mrk > 0)
+                            {
+                                string cardName = Content.s_instance?.GetName(mrk);
+                                if (!string.IsNullOrEmpty(cardName))
+                                    result = cardName;
+                            }
+
+                            int rare = (rares != null && i < rares.Count) ? rares[i] : -1;
+                            string rarityText = rare switch
+                            {
+                                1 => "Rare",
+                                2 => "Super Rare",
+                                3 => "Ultra Rare",
+                                _ => null
+                            };
+                            if (!string.IsNullOrEmpty(rarityText))
+                                result += string.IsNullOrEmpty(result) ? rarityText : $", {rarityText}";
+
+                            result += $"\n{i + 1} of {thumbs.Count}";
+                            return string.IsNullOrEmpty(result.Trim()) ? null : result;
                         }
                     }
                 }

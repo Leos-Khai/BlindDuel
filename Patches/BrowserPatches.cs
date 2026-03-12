@@ -11,6 +11,7 @@ namespace BlindDuel
         {
             var snapContent = __instance.GetComponentInChildren<Il2CppYgomSystem.UI.SnapContentManager>();
             CardBrowserState.SnapContentManager = snapContent;
+            CardBrowserState.ViewController = __instance;
         }
     }
 }

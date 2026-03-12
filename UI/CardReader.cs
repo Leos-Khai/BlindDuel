@@ -1,25 +1,21 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using Il2CppYgomGame.Card;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace BlindDuel
 {
     /// <summary>
-    /// Extracts card data from the game's card info UI panels.
-    /// Supports multiple contexts: Duel, DeckEdit, DeckBrowser, CardBrowser.
+    /// Extracts card data from the game's card database or UI panels.
+    /// Prefers native data API (Content) when card MRK is known.
+    /// Falls back to UI text extraction for contexts where MRK isn't available.
     /// </summary>
     public static class CardReader
     {
-        // Card info UI paths for each context — tried in order, first match wins
-        private static readonly (string path, Func<bool> condition, string attributePath)[] CardInfoPaths =
+        // UI paths for contexts where we must read from the panel (no MRK available)
+        private static readonly (string path, Func<bool> condition, string attributePath)[] UiFallbackPaths =
         {
-            (
-                "UI/OverlayCanvas/DialogManager/CardBrowser/CardBrowserUI(Clone)/Scroll View/Viewport/Content/Template(Clone){0}/CardInfoDetail_Browser(Clone)/Root/Window/StatusArea",
-                () => CardBrowserState.IsOpen,
-                "TitleAreaGroup/TitleArea/IconAttribute"
-            ),
             (
                 "UI/ContentCanvas/ContentManager/DeckEdit/DeckEditUI(Clone)/CardDetail/Root/Window",
                 () => GameObject.Find("UI/ContentCanvas/ContentManager/DeckEdit/") != null,
@@ -47,24 +43,101 @@ namespace BlindDuel
         };
 
         /// <summary>
+        /// Read card data from the game's native card database using MRK (card ID).
+        /// This is the preferred method — always correct, no template recycling issues.
+        /// </summary>
+        public static CardData ReadCardFromData(int mrk)
+        {
+            var card = BlindDuelCore.Preview.Card;
+            var content = Content.s_instance;
+            if (content == null || mrk <= 0) return card;
+
+            card.Name = content.GetName(mrk);
+
+            var attr = content.GetAttr(mrk);
+            card.Element = content.GetAttributeText(attr);
+
+            if (attr == Content.Attribute.Magic || attr == Content.Attribute.Trap)
+            {
+                // Spell/Trap card
+                card.SpellType = content.GetIconFullText(mrk);
+            }
+            else
+            {
+                // Monster card
+                int atk = content.GetAtk(mrk);
+                card.Atk = atk >= 0 ? atk.ToString() : "?";
+
+                var frame = content.GetFrame(mrk);
+                if (frame == Content.Frame.Link)
+                {
+                    card.Link = content.GetLinkNum(mrk).ToString();
+                }
+                else
+                {
+                    int def = content.GetDef(mrk);
+                    card.Def = def >= 0 ? def.ToString() : "?";
+                }
+
+                int rank = content.GetRank(mrk);
+                int star = content.GetStar(mrk);
+                if (rank > 0)
+                    card.Rank = rank.ToString();
+                else if (star > 0)
+                    card.Level = star.ToString();
+
+                int scaleL = content.GetScaleL(mrk);
+                if (scaleL > 0)
+                    card.PendulumScale = scaleL.ToString();
+
+                // Build type line from native data
+                var type = content.GetType(mrk);
+                var kind = content.GetKind(mrk);
+                string typeText = content.GetTypeText(type);
+                string kindText = content.GetKindText(kind);
+                if (!string.IsNullOrEmpty(typeText) && !string.IsNullOrEmpty(kindText))
+                    card.Attributes = $"[{typeText}/{kindText}]";
+                else if (!string.IsNullOrEmpty(typeText))
+                    card.Attributes = $"[{typeText}]";
+                else if (!string.IsNullOrEmpty(kindText))
+                    card.Attributes = $"[{kindText}]";
+            }
+
+            card.Description = content.GetDesc(mrk);
+
+            Log.Write($"[CardReader] Read from data: {card.Name} (mrk={mrk})");
+            return card;
+        }
+
+        /// <summary>
         /// Read card data from the currently visible card info panel.
-        /// Tries each known UI path until one returns results.
+        /// Uses native data for CardBrowser, falls back to UI text for other contexts.
         /// </summary>
         public static CardData ReadCurrentCard()
         {
             var card = BlindDuelCore.Preview.Card;
 
-            foreach (var (pathTemplate, condition, attrRelPath) in CardInfoPaths)
+            // CardBrowser: read directly from game data — no template guessing needed
+            if (CardBrowserState.IsOpen)
+            {
+                try
+                {
+                    int mrk = CardBrowserState.GetCurrentMrk();
+                    if (mrk > 0)
+                        return ReadCardFromData(mrk);
+                }
+                catch (Exception ex)
+                {
+                    Log.Write($"[CardReader] CardBrowser data read failed: {ex.Message}");
+                }
+            }
+
+            // Other contexts: read from UI panels
+            foreach (var (path, condition, attrRelPath) in UiFallbackPaths)
             {
                 try
                 {
                     if (!condition()) continue;
-
-                    string path = pathTemplate;
-
-                    // CardBrowser uses a paged template — substitute current page
-                    if (pathTemplate.Contains("{0}"))
-                        path = string.Format(pathTemplate, CardBrowserState.CurrentPage % 3);
 
                     var root = GameObject.Find(path);
                     if (root == null) continue;
