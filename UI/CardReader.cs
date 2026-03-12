@@ -72,6 +72,7 @@ namespace BlindDuel
                 if (frame == Content.Frame.Link)
                 {
                     card.Link = content.GetLinkNum(mrk).ToString();
+                    card.LinkArrows = DeckHandler.FormatLinkArrows(content.GetLinkMask(mrk));
                 }
                 else
                 {

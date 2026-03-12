@@ -17,6 +17,7 @@ namespace BlindDuel
         public string Def { get; set; } = "";
         public string PendulumScale { get; set; } = "";
         public string Link { get; set; } = "";
+        public string LinkArrows { get; set; } = "";
         public string Element { get; set; } = "";
         public string Attributes { get; set; } = "";
         public string SpellType { get; set; } = "";
@@ -29,7 +30,7 @@ namespace BlindDuel
         public void Clear()
         {
             Name = Description = Level = Rank = Atk = Def = PendulumScale =
-                Link = Element = Attributes = SpellType = Owned = "";
+                Link = LinkArrows = Element = Attributes = SpellType = Owned = "";
             IsInHand = true;
             CardObject = null;
         }
@@ -44,7 +45,13 @@ namespace BlindDuel
             var parts = new List<string> { $"Name: {Name}" };
 
             if (!string.IsNullOrEmpty(Atk)) parts.Add($"Attack: {Atk}");
-            if (!string.IsNullOrEmpty(Link)) parts.Add($"Link rating: {Link}");
+            if (!string.IsNullOrEmpty(Link))
+            {
+                string linkText = $"Link rating: {Link}";
+                if (!string.IsNullOrEmpty(LinkArrows))
+                    linkText += $", {LinkArrows}";
+                parts.Add(linkText);
+            }
             if (!string.IsNullOrEmpty(Def)) parts.Add($"Defense: {Def}");
             if (!string.IsNullOrEmpty(Rank)) parts.Add($"Rank: {Rank}");
             if (!string.IsNullOrEmpty(Level)) parts.Add($"Level: {Level}");

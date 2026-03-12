@@ -405,19 +405,28 @@ namespace BlindDuel
             }
             else
             {
-                int rank = content.GetRank(cardId);
-                int star = content.GetStar(cardId);
-                if (rank > 0)
-                    result += $", Rank {rank}";
-                else if (star > 0)
-                    result += $", Level {star}";
+                var frame = content.GetFrame(cardId);
+
+                if (frame != Content.Frame.Link)
+                {
+                    int rank = content.GetRank(cardId);
+                    int star = content.GetStar(cardId);
+                    if (rank > 0)
+                        result += $", Rank {rank}";
+                    else if (star > 0)
+                        result += $", Level {star}";
+                }
 
                 int atk = content.GetAtk(cardId);
                 result += $", Attack {(atk >= 0 ? atk.ToString() : "?")}";
 
-                var frame = content.GetFrame(cardId);
                 if (frame == Content.Frame.Link)
+                {
                     result += $", Link {content.GetLinkNum(cardId)}";
+                    string arrows = FormatLinkArrows(content.GetLinkMask(cardId));
+                    if (!string.IsNullOrEmpty(arrows))
+                        result += $", {arrows}";
+                }
                 else
                 {
                     int def = content.GetDef(cardId);
@@ -569,6 +578,29 @@ namespace BlindDuel
                 }
             }
             return count;
+        }
+
+        // --- Link arrows ---
+
+        /// <summary>
+        /// Convert a LinkMarkerBit bitmask into readable directions.
+        /// Order: top row (up-left, up, up-right), middle (left, right), bottom (down-left, down, down-right).
+        /// </summary>
+        public static string FormatLinkArrows(int mask)
+        {
+            if (mask == 0) return null;
+
+            var dirs = new System.Collections.Generic.List<string>();
+            if ((mask & (int)Content.LinkMarkerBit.UpLeft) != 0) dirs.Add("up left");
+            if ((mask & (int)Content.LinkMarkerBit.Up) != 0) dirs.Add("up");
+            if ((mask & (int)Content.LinkMarkerBit.UpRight) != 0) dirs.Add("up right");
+            if ((mask & (int)Content.LinkMarkerBit.Left) != 0) dirs.Add("left");
+            if ((mask & (int)Content.LinkMarkerBit.Right) != 0) dirs.Add("right");
+            if ((mask & (int)Content.LinkMarkerBit.DownLeft) != 0) dirs.Add("down left");
+            if ((mask & (int)Content.LinkMarkerBit.Down) != 0) dirs.Add("down");
+            if ((mask & (int)Content.LinkMarkerBit.DownRight) != 0) dirs.Add("down right");
+
+            return dirs.Count > 0 ? string.Join(", ", dirs) : null;
         }
 
         // --- VC accessors ---

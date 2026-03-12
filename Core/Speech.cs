@@ -118,6 +118,16 @@ namespace BlindDuel
         }
 
         /// <summary>
+        /// Speak a single character or short text for typing feedback.
+        /// No dedup — must always speak even if the same character is typed twice.
+        /// </summary>
+        public static void SayTyping(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            ScreenReader.Say(text);
+        }
+
+        /// <summary>
         /// Returns true if this button was already spoken for (duplicate fire).
         /// </summary>
         public static bool IsSameButton(SelectionButton button, bool peek = false)
