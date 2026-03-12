@@ -139,6 +139,15 @@ namespace BlindDuel
         }
 
         /// <summary>
+        /// Reset button dedup so the next focus speaks even if it's the same button.
+        /// Used when returning from overlay panels (e.g. CardActionMenu).
+        /// </summary>
+        public static void ResetButtonDedup()
+        {
+            _lastButton = null;
+        }
+
+        /// <summary>
         /// Silence current speech.
         /// </summary>
         public static void Silence()
