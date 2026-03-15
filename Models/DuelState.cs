@@ -16,10 +16,27 @@ namespace BlindDuel
         /// </summary>
         public static bool IsShowingResult { get; set; }
 
+        /// <summary>
+        /// True once the first phase change fires (Draw Phase, etc.).
+        /// Before this, the duel is still in its opening setup (dealing hands,
+        /// showing match tips) and card reading should be suppressed.
+        /// </summary>
+        public static bool HasPhaseStarted { get; set; }
+
+        /// <summary>
+        /// True when the player is navigating a CardSelectionList popup
+        /// (Extra Deck summon, material selection, effect targets).
+        /// SetDescriptionArea only processes card reads when this is true during duels;
+        /// all other field card reading goes through InvokeFocusField.
+        /// </summary>
+        public static bool InSelectionList { get; set; }
+
         public static void Clear()
         {
             Cards.Clear();
             IsShowingResult = false;
+            HasPhaseStarted = false;
+            InSelectionList = false;
         }
 
         public static CardRoot FindCardAtPosition(UnityEngine.Vector3 position)

@@ -6,222 +6,93 @@ namespace BlindDuel
 {
     public class DuelHandler : IMenuHandler
     {
-        // Suppress the first anchor focus after duel start (game auto-focuses during setup)
-        private static bool _firstAnchorSuppressed;
-
-        // Pending zone name to speak after card info via SayQueued
-        private static string _pendingZone;
+        // Pending selection list index to queue after card speech
+        private static string _pendingSelectionIndex;
 
         public bool CanHandle(string viewControllerName) =>
             viewControllerName is "DuelClient" or "DuelLive";
 
         public bool OnScreenEntered(string viewControllerName)
         {
-            _firstAnchorSuppressed = false;
             Speech.AnnounceScreen("Duel");
             return true;
         }
 
         public string OnButtonFocused(SelectionButton button)
         {
-            // Suppress button speech during duel end animation (before result message appears)
+            // Suppress button speech during duel end animation
             if (DuelState.IsShowingResult) return "";
             if (!NavigationState.IsInDuel) return null;
 
-            string name = button.name;
-
-            // Hand cards — card details read via SetDescriptionArea patch
-            if (name.Contains("HandCard"))
+            // Card selection list (Extra Deck summon, material selection, effect targets)
+            // Mark as selection list so SetDescriptionArea reads the card.
+            try
             {
-                _pendingZone = null;
-                PatchCardInfoSetDescription.ResetDedup();
-                BlindDuelCore.Preview.Card.CardObject = button.gameObject;
-                BlindDuelCore.Preview.Card.IsInHand = true;
-                return null;
-            }
-
-            // Field anchors — zone name speaks after card (or immediately if empty)
-            if (name.Contains("Anchor_"))
-            {
-                // Suppress the first auto-focus during duel setup transition
-                if (!_firstAnchorSuppressed)
+                var csl = button.GetComponentInParent<CardSelectionList>();
+                if (csl != null)
                 {
-                    _firstAnchorSuppressed = true;
-                    Log.Write($"[DuelHandler] Suppressed initial auto-focus: {name}");
+                    DuelState.InSelectionList = true;
+                    PatchCardInfoSetDescription.ResetDedup();
+                    _pendingSelectionIndex = GetSelectionIndex(button);
                     return "";
                 }
-
-                PatchCardInfoSetDescription.ResetDedup();
-                BlindDuelCore.Preview.Card.CardObject = button.gameObject;
-                BlindDuelCore.Preview.Card.IsInHand = false;
-
-                bool isOpponent = name.Contains("_Far_");
-                string zone = ExtractZonePart(name);
-                string zoneName = FormatZoneName(zone, isOpponent);
-
-                // Check if this zone has a card using the game's native API
-                int player = isOpponent ? 1 : 0;
-                int enginePos = GetEnginePosition(zone);
-                bool hasCard = enginePos >= 0 && HasCardAt(player, enginePos);
-
-                if (hasCard)
-                {
-                    // Card exists — let SetDescriptionArea read it, queue zone name after
-                    _pendingZone = zoneName;
-                    return ""; // suppress — card speaks via SayItem, zone via SayQueued
-                }
-
-                // Empty zone or container zone — speak zone name immediately
-                _pendingZone = null;
-                return zoneName;
             }
+            catch (Exception ex) { Log.Write($"[DuelHandler] CardSelection: {ex.Message}"); }
 
-            // Action buttons (Summon, Set, etc.) — do NOT reset card dedup
+            string name = button.name;
+
+            // Field anchors — onFocusFieldHandler handles card + zone reading
+            if (name.Contains("Anchor_")) return "";
+
+            // Suppress card speech when the button isn't interactable.
+            // The game sets interactable=false during animations/transitions
+            // and true when the player can actually interact.
+            try { if (!button.interactable) return ""; }
+            catch { }
+
+            // Hand cards are handled by PatchHandCardSelect (SelectByViewIndex patch).
+            // Action buttons (Summon, Set, etc.) — default behavior.
             return null;
         }
 
         /// <summary>
-        /// Consume and return the pending zone name, clearing it.
-        /// Called by ReadCardDelayed after card speech to queue zone announcement.
+        /// Consume and return the pending selection index, clearing it.
+        /// Called by ReadCardDelayed after card speech to queue index.
         /// </summary>
-        public static string ConsumePendingZone()
+        public static string ConsumeSelectionIndex()
         {
-            string zone = _pendingZone;
-            _pendingZone = null;
-            return zone;
+            string idx = _pendingSelectionIndex;
+            _pendingSelectionIndex = null;
+            return idx;
         }
 
         /// <summary>
-        /// Check if a card exists at the given engine position for the player.
+        /// Get the position of a button among its active siblings with SelectionButton components.
+        /// Returns "X of Y" string, or null if it can't be determined.
         /// </summary>
-        private static bool HasCardAt(int player, int locate)
+        private static string GetSelectionIndex(SelectionButton button)
         {
             try
             {
-                return Engine.IsThisCardExist(player, locate);
-            }
-            catch (Exception ex)
-            {
-                Log.Write($"[DuelHandler] IsThisCardExist failed: {ex.Message}");
-                return false;
-            }
-        }
+                var parent = button.transform.parent;
+                if (parent == null) return null;
 
-        /// <summary>
-        /// Map anchor zone string to Engine position constant.
-        /// Returns -1 for container zones (Grave, Extra, Deck, Exclude) that don't need card checks.
-        /// </summary>
-        private static int GetEnginePosition(string zone)
-        {
-            if (zone.StartsWith("Monster", StringComparison.OrdinalIgnoreCase))
-            {
-                int idx = ExtractIndex(zone, "Monster");
-                return idx switch
+                int current = -1, total = 0;
+                for (int i = 0; i < parent.childCount; i++)
                 {
-                    0 => Engine.PosMonsterLL,
-                    1 => Engine.PosMonsterL,
-                    2 => Engine.PosMonsterC,
-                    3 => Engine.PosMonsterR,
-                    4 => Engine.PosMonsterRR,
-                    _ => -1
-                };
+                    var child = parent.GetChild(i);
+                    if (!child.gameObject.activeInHierarchy) continue;
+                    if (child.GetComponent<SelectionButton>() == null) continue;
+                    if (child == button.transform)
+                        current = total;
+                    total++;
+                }
+
+                if (current >= 0 && total > 0)
+                    return $"{current + 1} of {total}";
             }
-
-            // Check FieldMagic BEFORE Magic
-            if (zone.StartsWith("FieldMagic", StringComparison.OrdinalIgnoreCase))
-                return Engine.PosField;
-
-            if (zone.StartsWith("Magic", StringComparison.OrdinalIgnoreCase))
-            {
-                int idx = ExtractIndex(zone, "Magic");
-                return idx switch
-                {
-                    0 => Engine.PosMagicLL,
-                    1 => Engine.PosMagicL,
-                    2 => Engine.PosMagicC,
-                    3 => Engine.PosMagicR,
-                    4 => Engine.PosMagicRR,
-                    _ => -1
-                };
-            }
-
-            if (zone.StartsWith("PendulumL", StringComparison.OrdinalIgnoreCase))
-                return Engine.PosPendulumLeft;
-            if (zone.StartsWith("PendulumR", StringComparison.OrdinalIgnoreCase))
-                return Engine.PosPendulumRight;
-            if (zone.StartsWith("ExMonsterL", StringComparison.OrdinalIgnoreCase))
-                return Engine.PosExLMonster;
-            if (zone.StartsWith("ExMonsterR", StringComparison.OrdinalIgnoreCase))
-                return Engine.PosExRMonster;
-
-            // Container zones — no card-at-position check needed
-            return -1;
-        }
-
-        /// <summary>
-        /// Extract the zone part from anchor name (e.g. "Monster2", "FieldMagic", "Grave").
-        /// </summary>
-        private static string ExtractZonePart(string name)
-        {
-            int sideStart = name.IndexOf("_Near_", StringComparison.Ordinal);
-            if (sideStart < 0)
-                sideStart = name.IndexOf("_Far_", StringComparison.Ordinal);
-            if (sideStart >= 0)
-            {
-                int zoneStart = name.IndexOf('_', sideStart + 1) + 1;
-                return name[zoneStart..];
-            }
-            return name;
-        }
-
-        /// <summary>
-        /// Format zone part into readable zone name with side prefix.
-        /// </summary>
-        private static string FormatZoneName(string zone, bool isOpponent)
-        {
-            string side = isOpponent ? "Opponent's " : "";
-
-            if (zone.StartsWith("FieldMagic", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Field Spell Zone";
-            if (zone.StartsWith("Monster", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Monster Zone {ExtractZoneNumber(zone, "Monster")}";
-            if (zone.StartsWith("Magic", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Spell Trap Zone {ExtractZoneNumber(zone, "Magic")}";
-            if (zone.StartsWith("Extra", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Extra Deck";
-            if (zone.StartsWith("Grave", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Graveyard";
-            if (zone.StartsWith("Exclude", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Banished";
-            if (zone.StartsWith("MainDeck", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Deck";
-            if (zone.StartsWith("PendulumL", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Left Pendulum Zone";
-            if (zone.StartsWith("PendulumR", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Right Pendulum Zone";
-            if (zone.StartsWith("ExMonsterR", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Extra Monster Zone Right";
-            if (zone.StartsWith("ExMonsterL", StringComparison.OrdinalIgnoreCase))
-                return $"{side}Extra Monster Zone Left";
-
-            Log.Write($"[DuelHandler] Unknown anchor zone: {zone}");
-            return $"{side}{zone}";
-        }
-
-        private static string ExtractZoneNumber(string zone, string prefix)
-        {
-            string suffix = zone[prefix.Length..];
-            if (int.TryParse(suffix, out int index))
-                return (index + 1).ToString();
-            return "";
-        }
-
-        private static int ExtractIndex(string zone, string prefix)
-        {
-            string suffix = zone[prefix.Length..];
-            if (int.TryParse(suffix, out int index))
-                return index;
-            return -1;
+            catch (Exception ex) { Log.Write($"[DuelHandler] SelectionIndex: {ex.Message}"); }
+            return null;
         }
     }
 }

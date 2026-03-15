@@ -57,22 +57,17 @@ namespace BlindDuel
 
         /// <summary>
         /// Invokable card reading method — used with MonoBehaviour.Invoke() for delayed reads.
-        /// Also handles pending zone announcements from DuelHandler:
-        /// - If a card was spoken, zone queues after it (SayQueued)
-        /// - If no card (empty zone), zone speaks immediately (SayItem)
+        /// Only used for selection list cards during duels (field/hand/zone reads go
+        /// through InvokeFocusField instead). Also used outside duels for deck editor etc.
         /// </summary>
         public void ReadCardDelayed()
         {
-            bool cardSpoken = CardReader.ReadAndSpeak();
+            string selIdx = DuelHandler.ConsumeSelectionIndex();
+            bool useQueued = PatchCardSelectionListSetTitle.ConsumeQueuedFlag();
 
-            string zone = DuelHandler.ConsumePendingZone();
-            if (!string.IsNullOrEmpty(zone))
-            {
-                if (cardSpoken)
-                    Speech.SayQueued(zone);
-                else
-                    Speech.SayItem(zone);
-            }
+            string suffix = !string.IsNullOrEmpty(selIdx) ? $"\n{selIdx}" : null;
+
+            CardReader.ReadAndSpeak(suffix: suffix, queued: useQueued);
         }
 
         /// <summary>

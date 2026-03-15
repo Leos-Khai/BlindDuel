@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Reflection;
 using Il2CppYgomGame.Duel;
 using Il2CppYgomGame.MDMarkup;
 using Il2CppYgomGame.Tutorial;
@@ -68,6 +70,14 @@ namespace BlindDuel
         {
             NavigationState.CurrentMenu = Menu.Duel;
             NavigationState.IsInDuel = true;
+
+            // Subscribe to the game's native field focus event.
+            // This fires when the duel cursor moves to any card/zone.
+            try
+            {
+                FieldFocusHandler.Subscribe(__instance);
+            }
+            catch (Exception ex) { Log.Write($"[DuelClientAwake] Focus subscribe failed: {ex.Message}"); }
         }
     }
 
@@ -81,11 +91,211 @@ namespace BlindDuel
         }
     }
 
+    /// <summary>
+    /// Handles field/hand/zone card reading via the game's native focus system.
+    /// Subscribes to DuelClient.onFocusFieldHandler (delegate subscription, not Harmony patch,
+    /// because InvokeFocusField is called from native code and bypasses managed wrappers).
+    /// Fires when the duel cursor moves to any position (monsters, spells, hand,
+    /// graveyard, extra deck, banished, etc.). Replaces SetDescriptionArea for
+    /// all duel field card reading — no more spam from animations or summons.
+    /// </summary>
+    static class FieldFocusHandler
+    {
+        private static int _lastUniqueId;
+
+        // Hold a reference to prevent GC of the managed delegate
+        private static DuelClient.onFocusFieldDelegate _handler;
+
+        // Suppression window: skip field focus reads briefly after game event messages
+        // (summon, effect, etc.) so they don't get interrupted.
+        private static float _suppressUntil;
+
+        public static void Subscribe(DuelClient client)
+        {
+            _handler = (Action<int, int, int>)OnFieldFocused;
+            client.add_onFocusFieldHandler(_handler);
+            Log.Write("[FieldFocus] Subscribed to onFocusFieldHandler");
+        }
+
+        static void OnFieldFocused(int player, int position, int viewIndex)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel || !DuelState.HasPhaseStarted) return;
+                if (DuelState.IsShowingResult) return;
+
+                // Player left the hand — reset hand dedup so re-entering reads correctly
+                PatchCardInfoSetDescription.ResetHandDedup();
+
+                // Suppress while field input is blocked (animations, transitions).
+                // fieldInputBlockCounter is the game's native interactivity gate.
+                try
+                {
+                    var client = DuelClient.instance;
+                    if (client != null && client.fieldInputBlockCounter > 0) return;
+                }
+                catch { }
+
+                // Suppress field focus reads briefly after game event messages
+                // (summon, effect activation) so they aren't interrupted.
+                if (UnityEngine.Time.time < _suppressUntil) return;
+
+                // Field focus means we're not in a selection list
+                DuelState.InSelectionList = false;
+
+                int mrk = 0;
+                int uniqueId = 0;
+                try
+                {
+                    mrk = Engine.GetCardID(player, position, viewIndex);
+                    uniqueId = Engine.GetCardUniqueID(player, position, viewIndex);
+                }
+                catch (Exception ex)
+                {
+                    Log.Write($"[FocusField] Engine query failed: {ex.Message}");
+                }
+
+                string zone = GetZoneName(player, position, viewIndex);
+
+                if (mrk <= 0)
+                {
+                    // No card at this position — speak zone name only
+                    if (!string.IsNullOrEmpty(zone))
+                    {
+                        Log.Write($"[FocusField] Empty: {zone}");
+                        Speech.SayItem(zone);
+                    }
+                    _lastUniqueId = 0;
+                    return;
+                }
+
+                // Don't reveal opponent's face-down cards
+                if (player != 0)
+                {
+                    try
+                    {
+                        if (!Engine.GetCardFace(player, position, viewIndex))
+                        {
+                            string msg = !string.IsNullOrEmpty(zone)
+                                ? $"Face-down card, {zone}"
+                                : "Face-down card";
+                            Log.Write($"[FocusField] {msg}");
+                            Speech.SayItem(msg);
+                            _lastUniqueId = uniqueId;
+                            return;
+                        }
+                    }
+                    catch { }
+                }
+
+                // Dedup — suppress re-reading the same card instance
+                if (uniqueId > 0 && uniqueId == _lastUniqueId) return;
+                if (uniqueId > 0) _lastUniqueId = uniqueId;
+
+                // Battle position and live stats for monster zones
+                int? liveAtk = null, liveDef = null;
+                if (IsMonsterZone(position))
+                {
+                    try
+                    {
+                        bool face = Engine.GetCardFace(player, position, viewIndex);
+                        bool turn = Engine.GetCardTurn(player, position, viewIndex);
+                        string battlePos = !face ? "Set" : turn ? "Attack Position" : "Defense Position";
+                        zone = !string.IsNullOrEmpty(zone) ? $"{battlePos}, {zone}" : battlePos;
+                    }
+                    catch (Exception ex) { Log.Write($"[FocusField] Position check: {ex.Message}"); }
+
+                    try
+                    {
+                        var bv = new Engine.BasicVal();
+                        Engine.GetCardBasicVal(player, position, viewIndex, ref bv);
+                        liveAtk = bv.Atk;
+                        liveDef = bv.Def;
+                    }
+                    catch (Exception ex) { Log.Write($"[FocusField] BasicVal: {ex.Message}"); }
+                }
+
+                CardReader.SpeakCardFromData(mrk, zone, liveAtk, liveDef);
+            }
+            catch (Exception ex) { Log.Write($"[PatchInvokeFocusField] {ex.Message}"); }
+        }
+
+        public static void ResetDedup() => _lastUniqueId = 0;
+
+        /// <summary>
+        /// Suppress field focus reads for a short period so game event messages
+        /// (summon announcements, effect activations) aren't interrupted.
+        /// </summary>
+        public static void SuppressBriefly(float seconds = 1.5f)
+        {
+            _suppressUntil = UnityEngine.Time.time + seconds;
+        }
+
+        private static string GetZoneName(int player, int position, int viewIndex)
+        {
+            string side = player != 0 ? "Opponent's " : "";
+
+            if (position == Engine.PosMonsterLL) return $"{side}Monster Zone 1";
+            if (position == Engine.PosMonsterL) return $"{side}Monster Zone 2";
+            if (position == Engine.PosMonsterC) return $"{side}Monster Zone 3";
+            if (position == Engine.PosMonsterR) return $"{side}Monster Zone 4";
+            if (position == Engine.PosMonsterRR) return $"{side}Monster Zone 5";
+            if (position == Engine.PosMagicLL) return $"{side}Spell Trap Zone 1";
+            if (position == Engine.PosMagicL) return $"{side}Spell Trap Zone 2";
+            if (position == Engine.PosMagicC) return $"{side}Spell Trap Zone 3";
+            if (position == Engine.PosMagicR) return $"{side}Spell Trap Zone 4";
+            if (position == Engine.PosMagicRR) return $"{side}Spell Trap Zone 5";
+            if (position == Engine.PosField) return $"{side}Field Spell Zone";
+            if (position == Engine.PosPendulumLeft) return $"{side}Left Pendulum Zone";
+            if (position == Engine.PosPendulumRight) return $"{side}Right Pendulum Zone";
+            if (position == Engine.PosExLMonster) return $"{side}Extra Monster Zone Left";
+            if (position == Engine.PosExRMonster) return $"{side}Extra Monster Zone Right";
+            if (position == Engine.PosHand)
+            {
+                try
+                {
+                    int count = Engine.GetCardNum(player, Engine.PosHand);
+                    if (count > 0 && viewIndex >= 0)
+                        return $"{side}Hand, {viewIndex + 1} of {count}";
+                }
+                catch { }
+                return $"{side}Hand";
+            }
+            if (position == Engine.PosExtra) return $"{side}Extra Deck";
+            if (position == Engine.PosDeck) return $"{side}Deck";
+            if (position == Engine.PosGrave) return $"{side}Graveyard";
+            if (position == Engine.PosExclude) return $"{side}Banished";
+
+            Log.Write($"[FocusField] Unknown position: player={player}, pos={position}, mapped to nothing");
+            return null;
+        }
+
+        private static bool IsMonsterZone(int position)
+        {
+            return position == Engine.PosMonsterLL || position == Engine.PosMonsterL ||
+                   position == Engine.PosMonsterC || position == Engine.PosMonsterR ||
+                   position == Engine.PosMonsterRR || position == Engine.PosExLMonster ||
+                   position == Engine.PosExRMonster;
+        }
+    }
+
+    /// <summary>
+    /// Card info panel reading — fires when any card gets focused in the duel.
+    /// During duels:
+    ///   - Hand cards: read directly from Engine database using CardInfoData.cardid
+    ///     and speak immediately. No delayed UI read needed.
+    ///   - Selection lists: use delayed ReadCardDelayed flow.
+    ///   - Field cards: ignored here (handled by onFocusFieldHandler).
+    /// Outside duels: fires normally for deck editor, card browser, etc.
+    /// </summary>
     [HarmonyPatch(typeof(CardInfo), nameof(CardInfo.SetDescriptionArea))]
     class PatchCardInfoSetDescription
     {
         private const float ReadDelay = 0.15f;
-        private static string _lastCardName = "";
+        private static int _lastUniqueId;
+        private static int _lastHandUniqueId;
+        private static int _pendingMrk;
+        private static int _pendingUniqueId;
 
         [HarmonyPostfix]
         static void Postfix(CardInfo __instance)
@@ -94,30 +304,94 @@ namespace BlindDuel
             {
                 if (!__instance.gameObject.activeInHierarchy) return;
 
-                // Debounce: cancel any pending read and schedule a new one.
-                // SetDescriptionArea fires multiple times per card — only the last one reads.
+                if (NavigationState.IsInDuel)
+                {
+                    if (!DuelState.HasPhaseStarted) return;
+                    if (DuelState.IsShowingResult) return;
+
+                    try
+                    {
+                        var data = __instance.m_CardInfoData;
+
+                        // Hand cards: read from Engine and speak immediately.
+                        // Uses CardInfoData (position, cardid, index) as the trigger —
+                        // the actual card data comes from the Engine database.
+                        if (data.position == Engine.PosHand && data.player == 0)
+                        {
+                            int mrk = data.cardid;
+                            if (mrk <= 0) return;
+
+                            int uid = data.uniqueid;
+                            if (uid > 0 && uid == _lastHandUniqueId) return;
+                            if (uid > 0) _lastHandUniqueId = uid;
+
+                            int handCount = Engine.GetCardNum(0, Engine.PosHand);
+                            int idx = data.index;
+                            string zone = handCount > 0
+                                ? $"Hand, {idx + 1} of {handCount}"
+                                : "Hand";
+
+                            Log.Write($"[HandCard] mrk={mrk}, uid={uid}, {zone}");
+                            CardReader.SpeakCardFromData(mrk, zone);
+                            return;
+                        }
+
+                        // Selection lists (Extra Deck summon, material selection, etc.)
+                        if (!DuelState.InSelectionList) return;
+
+                        _pendingMrk = data.cardid;
+                        _pendingUniqueId = data.uniqueid;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write($"[SetDescription] CardInfoData read failed: {ex.Message}");
+                        if (!DuelState.InSelectionList) return;
+                        _pendingMrk = 0;
+                        _pendingUniqueId = 0;
+                    }
+
+                    BlindDuelCore.Instance.CancelInvoke(nameof(BlindDuelCore.ReadCardDelayed));
+                    BlindDuelCore.Instance.Invoke(nameof(BlindDuelCore.ReadCardDelayed), ReadDelay);
+                    return;
+                }
+
+                // Outside duels: read from UI panels (deck editor, card browser, etc.)
+                try
+                {
+                    var data = __instance.m_CardInfoData;
+                    _pendingMrk = data.cardid;
+                    _pendingUniqueId = data.uniqueid;
+                }
+                catch (Exception ex)
+                {
+                    Log.Write($"[SetDescription] CardInfoData read failed: {ex.Message}");
+                    _pendingMrk = 0;
+                    _pendingUniqueId = 0;
+                }
+
                 BlindDuelCore.Instance.CancelInvoke(nameof(BlindDuelCore.ReadCardDelayed));
                 BlindDuelCore.Instance.Invoke(nameof(BlindDuelCore.ReadCardDelayed), ReadDelay);
             }
             catch (Exception ex)
             {
-                Log.Write($"[PatchCardInfoSetDescription] {ex.Message}");
+                Log.Write($"[SetDescription] {ex.Message}");
             }
         }
 
-        /// <summary>
-        /// Called by ReadCardDelayed to check and suppress duplicate reads.
-        /// Returns true if this card was already just read (suppress speech).
-        /// </summary>
-        public static bool CheckAndUpdateDedup(string cardName)
+        public static int PendingMrk => _pendingMrk;
+        public static int PendingUniqueId => _pendingUniqueId;
+
+        public static bool CheckAndUpdateDedup(int uniqueId)
         {
-            if (string.IsNullOrEmpty(cardName)) return false;
-            if (cardName == _lastCardName) return true;
-            _lastCardName = cardName;
+            if (uniqueId <= 0) return false;
+            if (uniqueId == _lastUniqueId) return true;
+            _lastUniqueId = uniqueId;
             return false;
         }
 
-        public static void ResetDedup() => _lastCardName = "";
+        public static void ResetDedup() => _lastUniqueId = 0;
+
+        public static void ResetHandDedup() => _lastHandUniqueId = 0;
     }
 
     // --- Tutorial & Instant Message patches ---
@@ -151,6 +425,8 @@ namespace BlindDuel
 
                 _lastMessage = combined;
                 Log.Write($"[TutorialCenter] {combined}");
+                if (NavigationState.IsInDuel)
+                    FieldFocusHandler.SuppressBriefly();
                 Speech.SayQueued(combined);
             }
             catch (Exception ex) { Log.Write($"[PatchTutorialCenterMsg] {ex.Message}"); }
@@ -175,6 +451,8 @@ namespace BlindDuel
 
                 _lastMessage = cleaned;
                 Log.Write($"[TutorialTop] {cleaned}");
+                if (NavigationState.IsInDuel)
+                    FieldFocusHandler.SuppressBriefly();
                 Speech.SayQueued(cleaned);
             }
             catch (Exception ex) { Log.Write($"[PatchTutorialTopMsg] {ex.Message}"); }
@@ -250,6 +528,125 @@ namespace BlindDuel
                 Speech.SayQueued(cleaned);
             }
             catch (Exception ex) { Log.Write($"[PatchDuelInfoDialog] {ex.Message}"); }
+        }
+    }
+
+    [HarmonyPatch]
+    class PatchDuelConfirmDialogOpen
+    {
+        static IEnumerable<MethodBase> TargetMethods()
+        {
+            var methods = new List<MethodBase>();
+            foreach (var m in typeof(DuelConfirmDialog).GetMethods())
+            {
+                if (m.Name == nameof(DuelConfirmDialog.Open))
+                    methods.Add(m);
+            }
+            return methods;
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(string message)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(message)) return;
+                string cleaned = TextUtil.StripTags(message);
+                if (string.IsNullOrWhiteSpace(cleaned)) return;
+
+                Log.Write($"[DuelConfirmDialog] {cleaned}");
+                Speech.SayImmediate(cleaned);
+            }
+            catch (Exception ex) { Log.Write($"[PatchDuelConfirmDialogOpen] {ex.Message}"); }
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelSelectDialog), nameof(DuelSelectDialog.Open))]
+    class PatchDuelSelectDialogOpen
+    {
+        [HarmonyPostfix]
+        static void Postfix(string message)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(message)) return;
+                string cleaned = TextUtil.StripTags(message);
+                if (string.IsNullOrWhiteSpace(cleaned)) return;
+
+                Log.Write($"[DuelSelectDialog] {cleaned}");
+                Speech.SayImmediate(cleaned);
+            }
+            catch (Exception ex) { Log.Write($"[PatchDuelSelectDialogOpen] {ex.Message}"); }
+        }
+    }
+
+    /// <summary>
+    /// Speaks the selection prompt for card selection list mode.
+    /// SetTitle is called internally during SetListImpl for list-based selections.
+    /// Shared dedup/speech logic lives in HandleTitle().
+    /// </summary>
+    [HarmonyPatch(typeof(CardSelectionList), nameof(CardSelectionList.SetTitle))]
+    class PatchCardSelectionListSetTitle
+    {
+        private static bool _nextReadQueued;
+        private static string _lastTitle = "";
+
+        /// <summary>
+        /// Shared handler for selection prompt titles from both SetTitle and SetList patches.
+        /// Deduplicates and speaks the title.
+        /// </summary>
+        public static void HandleTitle(string cleaned)
+        {
+            if (cleaned == _lastTitle) return;
+            _lastTitle = cleaned;
+
+            Log.Write($"[CardSelectionList] {cleaned}");
+            Speech.SayImmediate(cleaned);
+            _nextReadQueued = true;
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(string title)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(title)) return;
+                string cleaned = TextUtil.StripTags(title);
+                if (string.IsNullOrWhiteSpace(cleaned)) return;
+                HandleTitle(cleaned);
+            }
+            catch (Exception ex) { Log.Write($"[PatchCardSelectionListSetTitle] {ex.Message}"); }
+        }
+
+        public static bool ConsumeQueuedFlag()
+        {
+            bool val = _nextReadQueued;
+            _nextReadQueued = false;
+            return val;
+        }
+
+        public static void ResetDedup() => _lastTitle = "";
+    }
+
+    /// <summary>
+    /// Catches selection prompts that bypass SetTitle — e.g. field selection mode
+    /// ("Select the card to send to the Graveyard"). SetList receives the title
+    /// as a parameter and may not call SetTitle for all selection modes.
+    /// </summary>
+    [HarmonyPatch(typeof(CardSelectionList), nameof(CardSelectionList.SetList))]
+    class PatchCardSelectionListSetList
+    {
+        [HarmonyPostfix]
+        static void Postfix(string title)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(title)) return;
+                string cleaned = TextUtil.StripTags(title);
+                if (string.IsNullOrWhiteSpace(cleaned)) return;
+                PatchCardSelectionListSetTitle.HandleTitle(cleaned);
+            }
+            catch (Exception ex) { Log.Write($"[PatchCardSelectionListSetList] {ex.Message}"); }
         }
     }
 
@@ -358,6 +755,8 @@ namespace BlindDuel
         {
             try
             {
+                DuelState.HasPhaseStarted = true;
+
                 var phase = __instance.phase;
                 if (phase == _lastPhase) return;
                 _lastPhase = phase;

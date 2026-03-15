@@ -80,12 +80,16 @@ namespace BlindDuel
                     card.Def = def >= 0 ? def.ToString() : "?";
                 }
 
-                int rank = content.GetRank(mrk);
-                int star = content.GetStar(mrk);
-                if (rank > 0)
-                    card.Rank = rank.ToString();
-                else if (star > 0)
-                    card.Level = star.ToString();
+                // Link monsters have no Level or Rank
+                if (frame != Content.Frame.Link)
+                {
+                    int rank = content.GetRank(mrk);
+                    int star = content.GetStar(mrk);
+                    if (rank > 0)
+                        card.Rank = rank.ToString();
+                    else if (star > 0)
+                        card.Level = star.ToString();
+                }
 
                 int scaleL = content.GetScaleL(mrk);
                 if (scaleL > 0)
@@ -257,10 +261,39 @@ namespace BlindDuel
         /// Read card and speak it. Used by hotkey and patches.
         /// Returns true if a card was actually spoken.
         /// </summary>
-        public static bool ReadAndSpeak()
+        public static bool ReadAndSpeak(string suffix = null, bool queued = false)
         {
             BlindDuelCore.Preview.Clear();
-            var card = ReadCurrentCard();
+
+            CardData card;
+
+            if (NavigationState.IsInDuel)
+            {
+                // During duels, read card data directly from the game's card database
+                // using the MRK captured by the SetDescriptionArea patch.
+                // This is more reliable than UI text extraction: correct effects,
+                // proper link ratings/arrows, and no template recycling issues.
+                int mrk = PatchCardInfoSetDescription.PendingMrk;
+                if (mrk > 0)
+                    card = ReadCardFromData(mrk);
+                else
+                    card = ReadCurrentCard();
+
+                // Suppress re-reading the same card instance (e.g. summon/set triggers
+                // SetDescriptionArea again). Uses unique instance ID so multiple copies
+                // of the same card are handled correctly.
+                int uniqueId = PatchCardInfoSetDescription.PendingUniqueId;
+                if (uniqueId > 0 && PatchCardInfoSetDescription.CheckAndUpdateDedup(uniqueId))
+                {
+                    Log.Write($"[CardReader] Suppressed duplicate read: {card.Name} (uid={uniqueId})");
+                    return false;
+                }
+            }
+            else
+            {
+                card = ReadCurrentCard();
+            }
+
             string formatted = card.Format(
                 isDuel: NavigationState.IsInDuel,
                 trimAttributes: NavigationState.CurrentMenu == Menu.Deck
@@ -268,15 +301,43 @@ namespace BlindDuel
 
             if (string.IsNullOrEmpty(formatted)) return false;
 
-            // During duels, suppress re-reading the same card (e.g. summon/set triggers SetDescriptionArea again)
-            if (NavigationState.IsInDuel && PatchCardInfoSetDescription.CheckAndUpdateDedup(card.Name))
+            if (!string.IsNullOrEmpty(suffix))
+                formatted += suffix;
+
+            if (queued)
+                Speech.SayQueued(formatted);
+            else
+                Speech.SayItem(formatted);
+            return true;
+        }
+
+        /// <summary>
+        /// Read card directly from the database and speak it with an optional zone suffix.
+        /// Used by InvokeFocusField for all duel field/hand/zone card reading.
+        /// </summary>
+        public static void SpeakCardFromData(int mrk, string zone, int? liveAtk = null, int? liveDef = null)
+        {
+            BlindDuelCore.Preview.Clear();
+            var card = ReadCardFromData(mrk);
+
+            // Override with live stats from Engine (reflects effect modifications)
+            if (liveAtk.HasValue && !string.IsNullOrEmpty(card.Atk))
+                card.Atk = liveAtk.Value >= 0 ? liveAtk.Value.ToString() : "?";
+            if (liveDef.HasValue && !string.IsNullOrEmpty(card.Def))
+                card.Def = liveDef.Value >= 0 ? liveDef.Value.ToString() : "?";
+
+            string formatted = card.Format(isDuel: true, trimAttributes: false);
+            if (string.IsNullOrEmpty(formatted))
             {
-                Log.Write($"[CardReader] Suppressed duplicate read: {card.Name}");
-                return false;
+                if (!string.IsNullOrEmpty(zone))
+                    Speech.SayItem(zone);
+                return;
             }
 
+            if (!string.IsNullOrEmpty(zone))
+                formatted += $", {zone}";
+
             Speech.SayItem(formatted);
-            return true;
         }
 
         /// <summary>
