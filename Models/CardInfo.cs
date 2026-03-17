@@ -38,7 +38,7 @@ namespace BlindDuel
         /// <summary>
         /// Format card data into a readable speech string.
         /// </summary>
-        public string Format(bool isDuel = false, bool trimAttributes = false)
+        public string Format(bool isDuel = false, bool trimAttributes = false, string battlePosition = null)
         {
             if (string.IsNullOrWhiteSpace(Name)) return "";
 
@@ -53,6 +53,7 @@ namespace BlindDuel
                 parts.Add(linkText);
             }
             if (!string.IsNullOrEmpty(Def)) parts.Add($"Defense: {Def}");
+            if (!string.IsNullOrEmpty(battlePosition)) parts.Add(battlePosition);
             if (!string.IsNullOrEmpty(Rank)) parts.Add($"Rank: {Rank}");
             if (!string.IsNullOrEmpty(Level)) parts.Add($"Level: {Level}");
             if (!string.IsNullOrEmpty(Element)) parts.Add($"Element: {Element}");

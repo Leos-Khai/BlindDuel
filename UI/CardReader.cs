@@ -315,7 +315,7 @@ namespace BlindDuel
         /// Read card directly from the database and speak it with an optional zone suffix.
         /// Used by InvokeFocusField for all duel field/hand/zone card reading.
         /// </summary>
-        public static void SpeakCardFromData(int mrk, string zone, int? liveAtk = null, int? liveDef = null)
+        public static void SpeakCardFromData(int mrk, string zone, int? liveAtk = null, int? liveDef = null, bool queued = false, string battlePosition = null)
         {
             BlindDuelCore.Preview.Clear();
             var card = ReadCardFromData(mrk);
@@ -326,18 +326,24 @@ namespace BlindDuel
             if (liveDef.HasValue && !string.IsNullOrEmpty(card.Def))
                 card.Def = liveDef.Value >= 0 ? liveDef.Value.ToString() : "?";
 
-            string formatted = card.Format(isDuel: true, trimAttributes: false);
+            string formatted = card.Format(isDuel: true, trimAttributes: false, battlePosition: battlePosition);
             if (string.IsNullOrEmpty(formatted))
             {
                 if (!string.IsNullOrEmpty(zone))
-                    Speech.SayItem(zone);
+                {
+                    if (queued) Speech.SayQueued(zone);
+                    else Speech.SayItem(zone);
+                }
                 return;
             }
 
             if (!string.IsNullOrEmpty(zone))
                 formatted += $", {zone}";
 
-            Speech.SayItem(formatted);
+            if (queued)
+                Speech.SayQueued(formatted);
+            else
+                Speech.SayItem(formatted);
         }
 
         /// <summary>

@@ -206,11 +206,16 @@ namespace BlindDuel
                     text += $"\n{index} of {total}";
             }
 
-            // After a screen/dialog announcement, queue the auto-focused button instead of interrupting
-            if (NavigationState.DialogJustAnnounced || NavigationState.ScreenJustAnnounced)
+            // After a screen/dialog/duel-message announcement, queue the auto-focused button
+            // instead of interrupting the preceding speech.
+            bool shouldQueue = NavigationState.DialogJustAnnounced
+                            || NavigationState.ScreenJustAnnounced
+                            || DuelState.MessageJustAnnounced;
+            if (shouldQueue)
             {
                 NavigationState.DialogJustAnnounced = false;
                 NavigationState.ScreenJustAnnounced = false;
+                DuelState.MessageJustAnnounced = false;
                 Speech.SayQueued(text);
             }
             else

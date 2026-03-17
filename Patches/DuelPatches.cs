@@ -106,10 +106,6 @@ namespace BlindDuel
         // Hold a reference to prevent GC of the managed delegate
         private static DuelClient.onFocusFieldDelegate _handler;
 
-        // Suppression window: skip field focus reads briefly after game event messages
-        // (summon, effect, etc.) so they don't get interrupted.
-        private static float _suppressUntil;
-
         public static void Subscribe(DuelClient client)
         {
             _handler = (Action<int, int, int>)OnFieldFocused;
@@ -136,9 +132,10 @@ namespace BlindDuel
                 }
                 catch { }
 
-                // Suppress field focus reads briefly after game event messages
-                // (summon, effect activation) so they aren't interrupted.
-                if (UnityEngine.Time.time < _suppressUntil) return;
+                // Consume message flag — queue speech after a game event message
+                // instead of interrupting it.
+                bool queued = DuelState.MessageJustAnnounced;
+                DuelState.MessageJustAnnounced = false;
 
                 // Field focus means we're not in a selection list
                 DuelState.InSelectionList = false;
@@ -157,19 +154,41 @@ namespace BlindDuel
 
                 string zone = GetZoneName(player, position, viewIndex);
 
+                // Opponent's face-down cards: game hides the card ID (mrk=0) but
+                // the card still exists. Use GetCardNum to detect it on field zones.
+                if (mrk <= 0 && player != 0 && (IsMonsterZone(position) || IsSpellTrapZone(position)))
+                {
+                    try
+                    {
+                        int count = Engine.GetCardNum(player, position);
+                        if (count > 0)
+                        {
+                            string msg = !string.IsNullOrEmpty(zone)
+                                ? $"Face-down card, {zone}"
+                                : "Face-down card";
+                            Log.Write($"[FocusField] {msg}");
+                            SpeakField(msg, queued);
+                            _lastUniqueId = 0;
+                            return;
+                        }
+                    }
+                    catch (Exception ex) { Log.Write($"[FocusField] Face-down check: {ex.Message}"); }
+                }
+
                 if (mrk <= 0)
                 {
                     // No card at this position — speak zone name only
                     if (!string.IsNullOrEmpty(zone))
                     {
                         Log.Write($"[FocusField] Empty: {zone}");
-                        Speech.SayItem(zone);
+                        SpeakField(zone, queued);
                     }
                     _lastUniqueId = 0;
                     return;
                 }
 
-                // Don't reveal opponent's face-down cards
+                // Don't reveal opponent's face-down cards (when mrk is known
+                // but card is still physically face-down on the field)
                 if (player != 0)
                 {
                     try
@@ -180,7 +199,7 @@ namespace BlindDuel
                                 ? $"Face-down card, {zone}"
                                 : "Face-down card";
                             Log.Write($"[FocusField] {msg}");
-                            Speech.SayItem(msg);
+                            SpeakField(msg, queued);
                             _lastUniqueId = uniqueId;
                             return;
                         }
@@ -193,6 +212,7 @@ namespace BlindDuel
                 if (uniqueId > 0) _lastUniqueId = uniqueId;
 
                 // Battle position and live stats for monster zones
+                string battlePos = null;
                 int? liveAtk = null, liveDef = null;
                 if (IsMonsterZone(position))
                 {
@@ -200,8 +220,7 @@ namespace BlindDuel
                     {
                         bool face = Engine.GetCardFace(player, position, viewIndex);
                         bool turn = Engine.GetCardTurn(player, position, viewIndex);
-                        string battlePos = !face ? "Set" : turn ? "Attack Position" : "Defense Position";
-                        zone = !string.IsNullOrEmpty(zone) ? $"{battlePos}, {zone}" : battlePos;
+                        battlePos = !face ? "Set" : turn ? "Attack Position" : "Defense Position";
                     }
                     catch (Exception ex) { Log.Write($"[FocusField] Position check: {ex.Message}"); }
 
@@ -215,20 +234,26 @@ namespace BlindDuel
                     catch (Exception ex) { Log.Write($"[FocusField] BasicVal: {ex.Message}"); }
                 }
 
-                CardReader.SpeakCardFromData(mrk, zone, liveAtk, liveDef);
+                CardReader.SpeakCardFromData(mrk, zone, liveAtk, liveDef, queued, battlePos);
             }
             catch (Exception ex) { Log.Write($"[PatchInvokeFocusField] {ex.Message}"); }
         }
 
         public static void ResetDedup() => _lastUniqueId = 0;
 
-        /// <summary>
-        /// Suppress field focus reads for a short period so game event messages
-        /// (summon announcements, effect activations) aren't interrupted.
-        /// </summary>
-        public static void SuppressBriefly(float seconds = 1.5f)
+        private static void SpeakField(string text, bool queued)
         {
-            _suppressUntil = UnityEngine.Time.time + seconds;
+            if (queued)
+                Speech.SayQueued(text);
+            else
+                Speech.SayItem(text);
+        }
+
+        private static bool IsSpellTrapZone(int position)
+        {
+            return position == Engine.PosMagicLL || position == Engine.PosMagicL ||
+                   position == Engine.PosMagicC || position == Engine.PosMagicR ||
+                   position == Engine.PosMagicRR;
         }
 
         private static string GetZoneName(int player, int position, int viewIndex)
@@ -426,8 +451,14 @@ namespace BlindDuel
                 _lastMessage = combined;
                 Log.Write($"[TutorialCenter] {combined}");
                 if (NavigationState.IsInDuel)
-                    FieldFocusHandler.SuppressBriefly();
-                Speech.SayQueued(combined);
+                {
+                    DuelState.MessageJustAnnounced = true;
+                    Speech.SayImmediate(combined);
+                }
+                else
+                {
+                    Speech.SayQueued(combined);
+                }
             }
             catch (Exception ex) { Log.Write($"[PatchTutorialCenterMsg] {ex.Message}"); }
         }
@@ -452,8 +483,14 @@ namespace BlindDuel
                 _lastMessage = cleaned;
                 Log.Write($"[TutorialTop] {cleaned}");
                 if (NavigationState.IsInDuel)
-                    FieldFocusHandler.SuppressBriefly();
-                Speech.SayQueued(cleaned);
+                {
+                    DuelState.MessageJustAnnounced = true;
+                    Speech.SayImmediate(cleaned);
+                }
+                else
+                {
+                    Speech.SayQueued(cleaned);
+                }
             }
             catch (Exception ex) { Log.Write($"[PatchTutorialTopMsg] {ex.Message}"); }
         }
@@ -475,7 +512,15 @@ namespace BlindDuel
                 InstantMessageDedup.LastMessage = cleaned;
 
                 Log.Write($"[InstantMessage] {cleaned}");
-                Speech.SayQueued(cleaned);
+                if (NavigationState.IsInDuel)
+                {
+                    DuelState.MessageJustAnnounced = true;
+                    Speech.SayImmediate(cleaned);
+                }
+                else
+                {
+                    Speech.SayQueued(cleaned);
+                }
             }
             catch (Exception ex) { Log.Write($"[PatchInstantMessageOpen] {ex.Message}"); }
         }
@@ -497,7 +542,15 @@ namespace BlindDuel
                 InstantMessageDedup.LastMessage = cleaned;
 
                 Log.Write($"[InstantMessageReq] {cleaned}");
-                Speech.SayQueued(cleaned);
+                if (NavigationState.IsInDuel)
+                {
+                    DuelState.MessageJustAnnounced = true;
+                    Speech.SayImmediate(cleaned);
+                }
+                else
+                {
+                    Speech.SayQueued(cleaned);
+                }
             }
             catch (Exception ex) { Log.Write($"[PatchInstantMessageReqOpen] {ex.Message}"); }
         }
@@ -742,6 +795,27 @@ namespace BlindDuel
                 Speech.Silence();
             }
             catch (Exception ex) { Log.Write($"[PatchCardCommandOpen] {ex.Message}"); }
+        }
+    }
+
+    /// <summary>
+    /// When battle position selection opens (Attack/Defense choice during summon),
+    /// queue the first auto-focused button so it doesn't interrupt any preceding speech.
+    /// SetDefaultPosition is called by the game when initializing position buttons.
+    /// </summary>
+    [HarmonyPatch(typeof(CardCommandEx), nameof(CardCommandEx.SetDefaultPosition))]
+    class PatchPositionSelectOpen
+    {
+        [HarmonyPostfix]
+        static void Postfix()
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+                Log.Write("[PositionSelect] Battle position selection opened");
+                NavigationState.DialogJustAnnounced = true;
+            }
+            catch (Exception ex) { Log.Write($"[PatchPositionSelectOpen] {ex.Message}"); }
         }
     }
 

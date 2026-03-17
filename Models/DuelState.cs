@@ -31,12 +31,20 @@ namespace BlindDuel
         /// </summary>
         public static bool InSelectionList { get; set; }
 
+        /// <summary>
+        /// True briefly after a game event message (summon, effect, phase banner, etc.)
+        /// fires during a duel. The next field focus or button read consumes this flag
+        /// and queues its speech after the message instead of interrupting it.
+        /// </summary>
+        public static bool MessageJustAnnounced { get; set; }
+
         public static void Clear()
         {
             Cards.Clear();
             IsShowingResult = false;
             HasPhaseStarted = false;
             InSelectionList = false;
+            MessageJustAnnounced = false;
         }
 
         public static CardRoot FindCardAtPosition(UnityEngine.Vector3 position)
