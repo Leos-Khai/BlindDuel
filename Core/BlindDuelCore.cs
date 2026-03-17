@@ -50,6 +50,15 @@ namespace BlindDuel
                 }
             }
 
+            // Speak deferred button text if no dialog consumed it within the same frame.
+            // This mirrors the menu system's deferred button processing in Poll().
+            if (!string.IsNullOrEmpty(DuelState.LastQueuedButtonText)
+                && UnityEngine.Time.frameCount > DuelState.LastQueuedButtonFrame)
+            {
+                Speech.SayQueued(DuelState.LastQueuedButtonText);
+                DuelState.LastQueuedButtonText = null;
+            }
+
             // Detection: screen/dialog changes
             DialogDetector.Poll();
             ScreenDetector.Poll();

@@ -103,6 +103,10 @@ namespace BlindDuel
     {
         private static int _lastUniqueId;
 
+        // Track last focus so dialogs can re-queue the interrupted item
+        private static int _lastPlayer, _lastPosition, _lastViewIndex;
+        private static bool _hasLastFocus;
+
         // Hold a reference to prevent GC of the managed delegate
         private static DuelClient.onFocusFieldDelegate _handler;
 
@@ -123,6 +127,13 @@ namespace BlindDuel
                 // Player left the hand — reset hand dedup so re-entering reads correctly
                 PatchCardInfoSetDescription.ResetHandDedup();
 
+                // Selection list pending — defer field focus until title is spoken.
+                if (DuelState.HasPendingSelection)
+                {
+                    DuelState.DeferredFieldFocus = (player, position, viewIndex);
+                    return;
+                }
+
                 // Suppress while field input is blocked (animations, transitions).
                 // fieldInputBlockCounter is the game's native interactivity gate.
                 try
@@ -132,6 +143,23 @@ namespace BlindDuel
                 }
                 catch { }
 
+                // After CardCommand closes, suppress this auto-focus silently.
+                // The selection prompt message will speak first, then
+                // MessageJustAnnounced will queue the next manual navigation.
+                if (DuelState.SuppressNextFieldFocus)
+                {
+                    DuelState.SuppressNextFieldFocus = false;
+                    // Store for re-queue, but skip pile zones (navigation artifacts)
+                    if (position != Engine.PosExtra && position != Engine.PosDeck)
+                    {
+                        _lastPlayer = player;
+                        _lastPosition = position;
+                        _lastViewIndex = viewIndex;
+                        _hasLastFocus = true;
+                    }
+                    return;
+                }
+
                 // Consume message flag — queue speech after a game event message
                 // instead of interrupting it.
                 bool queued = DuelState.MessageJustAnnounced;
@@ -139,6 +167,25 @@ namespace BlindDuel
 
                 // Field focus means we're not in a selection list
                 DuelState.InSelectionList = false;
+
+                // Track for re-queue if a dialog interrupts this focus
+                _lastPlayer = player;
+                _lastPosition = position;
+                _lastViewIndex = viewIndex;
+                _hasLastFocus = true;
+
+                string zone = GetZoneName(player, position, viewIndex);
+
+                // Pile zones (Extra Deck, Deck) — just speak the zone name,
+                // don't read individual cards from the pile.
+                if (position == Engine.PosExtra || position == Engine.PosDeck)
+                {
+                    if (!string.IsNullOrEmpty(zone))
+                        SpeakField(zone, queued);
+                    _lastUniqueId = 0;
+                    _hasLastFocus = false; // Don't re-queue pile zones after dialogs
+                    return;
+                }
 
                 int mrk = 0;
                 int uniqueId = 0;
@@ -151,8 +198,6 @@ namespace BlindDuel
                 {
                     Log.Write($"[FocusField] Engine query failed: {ex.Message}");
                 }
-
-                string zone = GetZoneName(player, position, viewIndex);
 
                 // Opponent's face-down cards: game hides the card ID (mrk=0) but
                 // the card still exists. Use GetCardNum to detect it on field zones.
@@ -220,7 +265,7 @@ namespace BlindDuel
                     {
                         bool face = Engine.GetCardFace(player, position, viewIndex);
                         bool turn = Engine.GetCardTurn(player, position, viewIndex);
-                        battlePos = !face ? "Set" : turn ? "Attack Position" : "Defense Position";
+                        battlePos = !face ? "Set" : turn ? "Defense Position" : "Attack Position";
                     }
                     catch (Exception ex) { Log.Write($"[FocusField] Position check: {ex.Message}"); }
 
@@ -240,6 +285,39 @@ namespace BlindDuel
         }
 
         public static void ResetDedup() => _lastUniqueId = 0;
+
+        /// <summary>
+        /// Speak a deferred field focus queued after a selection title.
+        /// Called from HandleTitle after the title is spoken.
+        /// </summary>
+        public static void SpeakDeferredFocus(int player, int position, int viewIndex)
+        {
+            // Skip pile zones — they're navigation artifacts, not selection targets
+            if (position == Engine.PosExtra || position == Engine.PosDeck) return;
+
+            string zone = GetZoneName(player, position, viewIndex);
+            if (string.IsNullOrEmpty(zone)) return;
+
+            int mrk = 0;
+            try { mrk = Engine.GetCardID(player, position, viewIndex); }
+            catch { }
+
+            if (mrk > 0)
+                CardReader.SpeakCardFromData(mrk, zone, queued: true);
+            else if (!string.IsNullOrEmpty(zone))
+                Speech.SayQueued(zone);
+        }
+
+        /// <summary>
+        /// Re-queue the last focused field item. Called by dialog handlers
+        /// when a dialog interrupts the auto-focused item.
+        /// </summary>
+        public static void RequeueLastFocus()
+        {
+            if (!_hasLastFocus) return;
+            _hasLastFocus = false;
+            SpeakDeferredFocus(_lastPlayer, _lastPosition, _lastViewIndex);
+        }
 
         private static void SpeakField(string text, bool queued)
         {
@@ -565,6 +643,40 @@ namespace BlindDuel
         public static string LastMessage = "";
     }
 
+    /// <summary>
+    /// Catches duel action notifications (summons, attacks, etc.) from the game's
+    /// log system. AfterAddLog fires for every duel action with the formatted
+    /// localized text. This catches opponent summon notifications that don't go
+    /// through InstantMessage or TutorialNavigator.
+    /// Dedup against InstantMessageDedup prevents double-speaking effects
+    /// that are already caught by InstantMessage patches.
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AfterAddLog))]
+    class PatchDuelLogAfterAddLog
+    {
+        [HarmonyPostfix]
+        static void Postfix(string __0)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+                if (string.IsNullOrWhiteSpace(__0)) return;
+
+                string cleaned = TextUtil.StripTags(__0);
+                if (string.IsNullOrWhiteSpace(cleaned)) return;
+
+                // Dedup against InstantMessage to avoid double-speaking effects
+                if (cleaned == InstantMessageDedup.LastMessage) return;
+                InstantMessageDedup.LastMessage = cleaned;
+
+                Log.Write($"[DuelLog] {cleaned}");
+                DuelState.MessageJustAnnounced = true;
+                Speech.SayImmediate(cleaned);
+            }
+            catch (Exception ex) { Log.Write($"[PatchDuelLogAfterAddLog] {ex.Message}"); }
+        }
+    }
+
     [HarmonyPatch(typeof(DuelInfoDialogBase), nameof(DuelInfoDialogBase.Open))]
     class PatchDuelInfoDialogOpen
     {
@@ -578,7 +690,20 @@ namespace BlindDuel
                 if (string.IsNullOrWhiteSpace(cleaned)) return;
 
                 Log.Write($"[DuelInfoDialog] {cleaned}");
-                Speech.SayQueued(cleaned);
+                if (NavigationState.IsInDuel)
+                {
+                    DuelState.MessageJustAnnounced = true;
+                    Speech.SayImmediate(cleaned);
+
+                    // Re-queue the field item that was just interrupted.
+                    // The field focus fires ~4ms before this dialog in the same frame,
+                    // so the item spoke first and got cut off by SayImmediate above.
+                    FieldFocusHandler.RequeueLastFocus();
+                }
+                else
+                {
+                    Speech.SayQueued(cleaned);
+                }
             }
             catch (Exception ex) { Log.Write($"[PatchDuelInfoDialog] {ex.Message}"); }
         }
@@ -654,8 +779,68 @@ namespace BlindDuel
             _lastTitle = cleaned;
 
             Log.Write($"[CardSelectionList] {cleaned}");
+            DuelState.MessageJustAnnounced = true;
             Speech.SayImmediate(cleaned);
             _nextReadQueued = true;
+
+            // Queue the deferred or interrupted item after the title.
+            // This mirrors QueueFocusedItem for normal menus.
+            DuelState.HasPendingSelection = false;
+            QueueDeferredItem();
+
+            // Re-queue what was interrupted by this title.
+            FieldFocusHandler.RequeueLastFocus();
+
+            // Re-queue button text that was queued but then interrupted by SayImmediate
+            if (!string.IsNullOrEmpty(DuelState.LastQueuedButtonText))
+            {
+                Speech.SayQueued(DuelState.LastQueuedButtonText);
+                DuelState.LastQueuedButtonText = null;
+            }
+        }
+
+        /// <summary>
+        /// Speak the item that was deferred during selection setup, queued after the title.
+        /// </summary>
+        private static void QueueDeferredItem()
+        {
+            // Deferred button (card list selection)
+            var btn = DuelState.DeferredSelectionButton;
+            if (btn != null)
+            {
+                DuelState.DeferredSelectionButton = null;
+                try
+                {
+                    var handler = HandlerRegistry.Current;
+                    if (handler != null)
+                    {
+                        string text = handler.OnButtonFocused(btn);
+                        // Handler spoke the card directly (returned "")
+                        // or returned null — try default text
+                        if (text == null)
+                        {
+                            text = TextExtractor.ExtractFirst(btn.gameObject);
+                        }
+                        if (!string.IsNullOrWhiteSpace(text) && text != "")
+                            Speech.SayQueued(text);
+                    }
+                }
+                catch (Exception ex) { Log.Write($"[QueueDeferred] Button: {ex.Message}"); }
+                return;
+            }
+
+            // Deferred field focus (field zone selection)
+            var focus = DuelState.DeferredFieldFocus;
+            if (focus.HasValue)
+            {
+                DuelState.DeferredFieldFocus = null;
+                try
+                {
+                    var (player, position, viewIndex) = focus.Value;
+                    FieldFocusHandler.SpeakDeferredFocus(player, position, viewIndex);
+                }
+                catch (Exception ex) { Log.Write($"[QueueDeferred] Field: {ex.Message}"); }
+            }
         }
 
         [HarmonyPostfix]
@@ -689,17 +874,81 @@ namespace BlindDuel
     [HarmonyPatch(typeof(CardSelectionList), nameof(CardSelectionList.SetList))]
     class PatchCardSelectionListSetList
     {
+        /// <summary>
+        /// PREFIX: Set pending flag BEFORE the game creates items and auto-focuses.
+        /// Mirrors HasPendingScreen for normal menus.
+        /// </summary>
+        [HarmonyPrefix]
+        static void Prefix()
+        {
+            if (NavigationState.IsInDuel)
+            {
+                DuelState.HasPendingSelection = true;
+                DuelState.DeferredSelectionButton = null;
+                DuelState.DeferredFieldFocus = null;
+            }
+        }
+
         [HarmonyPostfix]
         static void Postfix(string title)
         {
             try
             {
+                // Always clear pending flag — even if title is empty.
+                // Otherwise HasPendingSelection stays true and all buttons are deferred forever.
+                if (NavigationState.IsInDuel)
+                    DuelState.HasPendingSelection = false;
+
                 if (string.IsNullOrWhiteSpace(title)) return;
                 string cleaned = TextUtil.StripTags(title);
                 if (string.IsNullOrWhiteSpace(cleaned)) return;
                 PatchCardSelectionListSetTitle.HandleTitle(cleaned);
             }
             catch (Exception ex) { Log.Write($"[PatchCardSelectionListSetList] {ex.Message}"); }
+        }
+    }
+
+    /// <summary>
+    /// Catches field selection prompts that go through EffectTaskRunDialog
+    /// (e.g. "Select the card to send to the Graveyard"). RunDialog sets up
+    /// the selection UI and populates the text. Reading __instance.text here
+    /// catches prompts that bypass CardSelectionList.SetTitle/SetList.
+    /// </summary>
+    [HarmonyPatch(typeof(EffectTaskRunDialog), nameof(EffectTaskRunDialog.RunDialog))]
+    class PatchEffectTaskRunDialog
+    {
+        [HarmonyPostfix]
+        static void Postfix(EffectTaskRunDialog __instance)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+
+                string text = __instance.text;
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    string cleaned = TextUtil.StripTags(text);
+                    if (!string.IsNullOrWhiteSpace(cleaned))
+                    {
+                        Log.Write($"[EffectTaskRunDialog] {cleaned}");
+                        PatchCardSelectionListSetTitle.HandleTitle(cleaned);
+                        return;
+                    }
+                }
+
+                // Fallback: read activateCardSelectionText static field
+                string actText = EffectTaskRunDialog.activateCardSelectionText;
+                if (!string.IsNullOrWhiteSpace(actText))
+                {
+                    string cleaned = TextUtil.StripTags(actText);
+                    if (!string.IsNullOrWhiteSpace(cleaned))
+                    {
+                        Log.Write($"[EffectTaskRunDialog.activate] {cleaned}");
+                        PatchCardSelectionListSetTitle.HandleTitle(cleaned);
+                    }
+                }
+            }
+            catch (Exception ex) { Log.Write($"[PatchEffectTaskRunDialog] {ex.Message}"); }
         }
     }
 
@@ -798,6 +1047,23 @@ namespace BlindDuel
         }
     }
 
+    [HarmonyPatch(typeof(CardCommand), nameof(CardCommand.Close))]
+    class PatchCardCommandClose
+    {
+        [HarmonyPostfix]
+        static void Postfix()
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+                // Suppress the next field focus — a selection prompt message
+                // will follow shortly and should speak first.
+                DuelState.SuppressNextFieldFocus = true;
+            }
+            catch (Exception ex) { Log.Write($"[PatchCardCommandClose] {ex.Message}"); }
+        }
+    }
+
     /// <summary>
     /// When battle position selection opens (Attack/Defense choice during summon),
     /// queue the first auto-focused button so it doesn't interrupt any preceding speech.
@@ -814,6 +1080,9 @@ namespace BlindDuel
                 if (!NavigationState.IsInDuel) return;
                 Log.Write("[PositionSelect] Battle position selection opened");
                 NavigationState.DialogJustAnnounced = true;
+                DuelState.HasPendingSelection = true;
+                DuelState.DeferredSelectionButton = null;
+                DuelState.DeferredFieldFocus = null;
             }
             catch (Exception ex) { Log.Write($"[PatchPositionSelectOpen] {ex.Message}"); }
         }

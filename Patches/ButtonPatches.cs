@@ -173,6 +173,23 @@ namespace BlindDuel
                 return;
             }
 
+            // Selection list pending — defer button until title is spoken.
+            // Mirrors HasPendingScreen but for duel CardSelectionList prompts.
+            if (DuelState.HasPendingSelection)
+            {
+                DuelState.DeferredSelectionButton = __instance;
+                return;
+            }
+
+            // After CardCommand closes, suppress auto-focused button so the
+            // selection prompt message speaks first without a blip.
+            if (DuelState.SuppressNextFieldFocus && NavigationState.IsInDuel)
+            {
+                DuelState.SuppressNextFieldFocus = false;
+                DuelState.DeferredSelectionButton = __instance;
+                return;
+            }
+
             // Game-native transition check: suppress buttons that fire during
             // screen transitions (e.g. brief OK button during gate entry).
             // This catches transition artifacts that HasPendingScreen misses
@@ -216,6 +233,17 @@ namespace BlindDuel
                 NavigationState.DialogJustAnnounced = false;
                 NavigationState.ScreenJustAnnounced = false;
                 DuelState.MessageJustAnnounced = false;
+
+                if (NavigationState.IsInDuel)
+                {
+                    // Don't speak — store silently. If a dialog follows (same frame),
+                    // HandleTitle will re-queue it after the message. If not,
+                    // Update() will speak it on the next frame.
+                    DuelState.LastQueuedButtonText = text;
+                    DuelState.LastQueuedButtonFrame = UnityEngine.Time.frameCount;
+                    return;
+                }
+
                 Speech.SayQueued(text);
             }
             else

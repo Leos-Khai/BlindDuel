@@ -24,17 +24,35 @@ namespace BlindDuel
             if (DuelState.IsShowingResult) return "";
             if (!NavigationState.IsInDuel) return null;
 
-            // Card selection list (Extra Deck summon, material selection, effect targets)
-            // Mark as selection list so SetDescriptionArea reads the card.
+            // Card selection list (graveyard, chain, extra deck summon, etc.)
+            // Read card data directly from ListCard.m_CardData — no SetDescriptionArea needed.
             try
             {
                 var csl = button.GetComponentInParent<CardSelectionList>();
                 if (csl != null)
                 {
-                    DuelState.InSelectionList = true;
-                    PatchCardInfoSetDescription.ResetDedup();
-                    _pendingSelectionIndex = GetSelectionIndex(button);
-                    return "";
+                    var listCard = button.GetComponent<ListCard>();
+                    if (listCard == null)
+                        listCard = button.GetComponentInParent<ListCard>();
+
+                    if (listCard != null)
+                    {
+                        try
+                        {
+                            var data = listCard.m_CardData;
+                            if (data != null && data.cardid > 0)
+                            {
+                                string index = GetSelectionIndex(button);
+                                bool queued = PatchCardSelectionListSetTitle.ConsumeQueuedFlag();
+                                CardReader.SpeakCardFromData(data.cardid, index, queued: queued);
+                                return "";
+                            }
+                        }
+                        catch (Exception ex) { Log.Write($"[DuelHandler] ListCard read: {ex.Message}"); }
+                    }
+
+                    // No ListCard (cancel/confirm button) — fall through to default text
+                    return null;
                 }
             }
             catch (Exception ex) { Log.Write($"[DuelHandler] CardSelection: {ex.Message}"); }
