@@ -736,6 +736,18 @@ namespace BlindDuel
     /// </summary>
     static class DuelLogHelper
     {
+        /// <summary>
+        /// Captured in each summon/activation prefix so the postfix can find
+        /// the newly added action (not the last action overall, which may be stale).
+        /// </summary>
+        private static int _prevActionCount;
+
+        public static void CapturePrevActionCount(DuelLogController instance)
+        {
+            try { _prevActionCount = instance.m_DataList_ShowAction?.Count ?? 0; }
+            catch { _prevActionCount = -1; }
+        }
+
         public static void AnnounceSummon(DuelLogController instance, int prevCardNameCount, string defaultLabel)
         {
             try
@@ -743,19 +755,18 @@ namespace BlindDuel
                 if (!NavigationState.IsInDuel) return;
                 if (prevCardNameCount < 0) return;
 
-                // Try to read the specific summon type and the ACTION's team.
-                // The action's team identifies who performed the summon, which is
-                // more reliable than the card's team (which can differ when using
-                // opponent's monsters as material, e.g. via Quick Effect Link Summon).
+                // Find the newly added action (not the last one overall —
+                // the list accumulates across the entire duel).
                 string summonName = defaultLabel;
                 bool? actionTeam = null;
                 try
                 {
                     var actionList = instance.m_DataList_ShowAction;
-                    if (actionList != null && actionList.Count > 0)
+                    if (actionList != null && _prevActionCount >= 0
+                        && actionList.Count > _prevActionCount)
                     {
-                        var lastAction = actionList[actionList.Count - 1];
-                        var datac = lastAction.datac;
+                        var newAction = actionList[_prevActionCount];
+                        var datac = newAction.datac;
                         var actType = datac.acttype;
                         string specific = GetSummonTypeName(actType);
                         if (specific != null)
@@ -798,15 +809,15 @@ namespace BlindDuel
                 if (!NavigationState.IsInDuel) return;
                 if (prevCardNameCount < 0) return;
 
-                // Get action team (who performed the activation)
+                // Get action team from the newly added action
                 bool? actionTeam = null;
                 try
                 {
                     var actionList = instance.m_DataList_ShowAction;
-                    if (actionList != null && actionList.Count > 0)
+                    if (actionList != null && _prevActionCount >= 0
+                        && actionList.Count > _prevActionCount)
                     {
-                        var lastAction = actionList[actionList.Count - 1];
-                        actionTeam = lastAction.datac.team;
+                        actionTeam = actionList[_prevActionCount].datac.team;
                     }
                 }
                 catch { }
@@ -874,6 +885,7 @@ namespace BlindDuel
         {
             try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
             catch { __state = -1; }
+            DuelLogHelper.CapturePrevActionCount(__instance);
         }
 
         [HarmonyPostfix]
@@ -891,6 +903,7 @@ namespace BlindDuel
         {
             try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
             catch { __state = -1; }
+            DuelLogHelper.CapturePrevActionCount(__instance);
         }
 
         [HarmonyPostfix]
@@ -908,6 +921,7 @@ namespace BlindDuel
         {
             try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
             catch { __state = -1; }
+            DuelLogHelper.CapturePrevActionCount(__instance);
         }
 
         [HarmonyPostfix]
@@ -930,6 +944,7 @@ namespace BlindDuel
         {
             try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
             catch { __state = -1; }
+            DuelLogHelper.CapturePrevActionCount(__instance);
         }
 
         [HarmonyPostfix]

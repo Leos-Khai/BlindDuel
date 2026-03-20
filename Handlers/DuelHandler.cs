@@ -9,13 +9,13 @@ namespace BlindDuel
         // Pending selection list index to queue after card speech
         private static string _pendingSelectionIndex;
 
-        // Dedup: same card is never read twice in a row.
-        // Fires 1-3 during list setup all have the same cardid → only first reads.
-        // Navigating to a different card resets naturally.
-        private static int _lastSelCardId;
+        // Dedup: OnSelected fires 3x during list setup for the same button.
+        // Track by button reference so two copies of the same card (different
+        // buttons, same cardid) both read, but the 3 setup fires are caught.
+        private static SelectionButton _lastSelButton;
 
         /// <summary>Reset selection dedup when a new list opens.</summary>
-        public static void ResetSelectionDedup() => _lastSelCardId = 0;
+        public static void ResetSelectionDedup() => _lastSelButton = null;
 
         public bool CanHandle(string viewControllerName) =>
             viewControllerName is "DuelClient" or "DuelLive";
@@ -52,10 +52,12 @@ namespace BlindDuel
                             {
                                 // Dedup: OnSelected fires 3 times during list setup
                                 // (initial focus, priority recalc, delayed settle).
-                                // All have the same cardid — skip if unchanged.
-                                if (data.cardid == _lastSelCardId)
+                                // All fire on the same button — skip if same instance.
+                                // Two copies of the same card are different buttons,
+                                // so both read correctly.
+                                if (button == _lastSelButton)
                                     return "";
-                                _lastSelCardId = data.cardid;
+                                _lastSelButton = button;
 
                                 // Don't reveal cards the player doesn't know about
                                 // (opponent's face-down cards in target selection lists)
