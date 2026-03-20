@@ -18,6 +18,23 @@ namespace BlindDuel
         public static bool IsShowingResult { get; set; }
 
         /// <summary>
+        /// True while the duel log viewer is open (LT/L2 to open).
+        /// </summary>
+        public static bool IsDuelLogOpen { get; set; }
+
+        /// <summary>
+        /// Reference to the active DuelLogScrollView while the log is open.
+        /// Used to poll topitemDataindex for scroll tracking.
+        /// </summary>
+        public static DuelLogScrollView LogScrollView { get; set; }
+
+        /// <summary>
+        /// Reference to the DuelLogController while the log is open.
+        /// Used to look up team data for log entries.
+        /// </summary>
+        public static DuelLogController LogController { get; set; }
+
+        /// <summary>
         /// True once the first phase change fires (Draw Phase, etc.).
         /// Before this, the duel is still in its opening setup (dealing hands,
         /// showing match tips) and card reading should be suppressed.
@@ -56,6 +73,12 @@ namespace BlindDuel
         public static int LastQueuedButtonFrame { get; set; }
 
         /// <summary>
+        /// True when deferred button text should interrupt (normal navigation).
+        /// False when it should queue (after a screen/dialog announcement).
+        /// </summary>
+        public static bool LastQueuedButtonInterrupt { get; set; }
+
+        /// <summary>
         /// True after CardCommand closes (player selected Summon/Set/etc.).
         /// Suppresses the next field focus so the selection prompt message
         /// speaks first without a brief blip of the auto-focused zone.
@@ -78,6 +101,9 @@ namespace BlindDuel
         {
             Cards.Clear();
             IsShowingResult = false;
+            IsDuelLogOpen = false;
+            LogScrollView = null;
+            LogController = null;
             HasPhaseStarted = false;
             InSelectionList = false;
             MessageJustAnnounced = false;
@@ -91,6 +117,45 @@ namespace BlindDuel
         public static CardRoot FindCardAtPosition(UnityEngine.Vector3 position)
         {
             return Cards.Find(c => c.cardLocator.pos == position);
+        }
+
+        /// <summary>
+        /// Returns the viewer's player index from the Engine.
+        /// In solo/AI duels this is 0; in online duels it can be 0 or 1.
+        /// Falls back to 0 if the API is unavailable.
+        /// </summary>
+        public static int GetMyPlayerNum()
+        {
+            try
+            {
+                var client = DuelClient.instance;
+                if (client != null)
+                {
+                    var init = client.engineInitializer;
+                    if (init != null)
+                        return init.myPlayerNum;
+                }
+            }
+            catch { }
+            return 0;
+        }
+
+        /// <summary>
+        /// True when the given Engine player index is the viewer (me).
+        /// </summary>
+        public static bool IsMyPlayer(int player) => player == GetMyPlayerNum();
+
+        /// <summary>
+        /// True when ShowCardNameData.team refers to the opponent.
+        /// The team field is player-0-relative: team=true means player 0's card.
+        /// When we're player 1, that mapping is inverted.
+        /// </summary>
+        public static bool IsOpponentTeam(bool team)
+        {
+            int myPlayer = GetMyPlayerNum();
+            // team=true → player 0's card. If I'm player 0, that's mine (not opponent).
+            // team=true → player 0's card. If I'm player 1, that's opponent.
+            return team ? (myPlayer != 0) : (myPlayer == 0);
         }
     }
 }

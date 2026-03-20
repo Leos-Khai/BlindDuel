@@ -50,12 +50,19 @@ namespace BlindDuel
                 }
             }
 
+            // Duel log selection tracking
+            if (DuelState.IsDuelLogOpen)
+                DuelLogReader.PollSelection();
+
             // Speak deferred button text if no dialog consumed it within the same frame.
             // This mirrors the menu system's deferred button processing in Poll().
             if (!string.IsNullOrEmpty(DuelState.LastQueuedButtonText)
                 && UnityEngine.Time.frameCount > DuelState.LastQueuedButtonFrame)
             {
-                Speech.SayQueued(DuelState.LastQueuedButtonText);
+                if (DuelState.LastQueuedButtonInterrupt)
+                    Speech.SayItem(DuelState.LastQueuedButtonText);
+                else
+                    Speech.SayQueued(DuelState.LastQueuedButtonText);
                 DuelState.LastQueuedButtonText = null;
             }
 

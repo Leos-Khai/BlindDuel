@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Il2CppYgomGame.Card;
 using Il2CppYgomGame.Duel;
 using Il2CppYgomGame.MDMarkup;
 using Il2CppYgomGame.Tutorial;
+using Il2CppYgomSystem.UI;
 using HarmonyLib;
 
 namespace BlindDuel
@@ -70,6 +72,16 @@ namespace BlindDuel
         {
             NavigationState.CurrentMenu = Menu.Duel;
             NavigationState.IsInDuel = true;
+            DuelLogReader.Reset();
+
+            // Log player identity for debugging online duel perspective
+            try
+            {
+                var init = __instance.engineInitializer;
+                if (init != null)
+                    Log.Write($"[DuelClientAwake] myPlayerNum={init.myPlayerNum}, rivalPlayerNum={init.rivalPlayerNum}");
+            }
+            catch { }
 
             // Subscribe to the game's native field focus event.
             // This fires when the duel cursor moves to any card/zone.
@@ -160,10 +172,14 @@ namespace BlindDuel
                     return;
                 }
 
-                // Consume message flag — queue speech after a game event message
-                // instead of interrupting it.
+                // Consume announcement flags — queue speech after a game event
+                // instead of interrupting it. Also clear screen/dialog flags
+                // since duel navigation bypasses ButtonPatches where they'd
+                // normally be consumed, causing stale flags to persist.
                 bool queued = DuelState.MessageJustAnnounced;
                 DuelState.MessageJustAnnounced = false;
+                NavigationState.ScreenJustAnnounced = false;
+                NavigationState.DialogJustAnnounced = false;
 
                 // Field focus means we're not in a selection list
                 DuelState.InSelectionList = false;
@@ -201,7 +217,7 @@ namespace BlindDuel
 
                 // Opponent's face-down cards: game hides the card ID (mrk=0) but
                 // the card still exists. Use GetCardNum to detect it on field zones.
-                if (mrk <= 0 && player != 0 && (IsMonsterZone(position) || IsSpellTrapZone(position)))
+                if (mrk <= 0 && !DuelState.IsMyPlayer(player) && (IsMonsterZone(position) || IsSpellTrapZone(position)))
                 {
                     try
                     {
@@ -234,7 +250,7 @@ namespace BlindDuel
 
                 // Don't reveal opponent's face-down cards (when mrk is known
                 // but card is still physically face-down on the field)
-                if (player != 0)
+                if (!DuelState.IsMyPlayer(player))
                 {
                     try
                     {
@@ -287,6 +303,12 @@ namespace BlindDuel
         public static void ResetDedup() => _lastUniqueId = 0;
 
         /// <summary>
+        /// Clear last focus tracking without re-queuing speech.
+        /// Used when entering a selection list — the field context is replaced.
+        /// </summary>
+        public static void ClearLastFocus() => _hasLastFocus = false;
+
+        /// <summary>
         /// Speak a deferred field focus queued after a selection title.
         /// Called from HandleTitle after the title is spoken.
         /// </summary>
@@ -302,10 +324,43 @@ namespace BlindDuel
             try { mrk = Engine.GetCardID(player, position, viewIndex); }
             catch { }
 
-            if (mrk > 0)
-                CardReader.SpeakCardFromData(mrk, zone, queued: true);
-            else if (!string.IsNullOrEmpty(zone))
-                Speech.SayQueued(zone);
+            // Opponent's face-down cards: game hides card ID (mrk=0) but card exists
+            if (mrk <= 0 && !DuelState.IsMyPlayer(player) && (IsMonsterZone(position) || IsSpellTrapZone(position)))
+            {
+                try
+                {
+                    int count = Engine.GetCardNum(player, position);
+                    if (count > 0)
+                    {
+                        Speech.SayQueued($"Face-down card, {zone}");
+                        return;
+                    }
+                }
+                catch { }
+            }
+
+            if (mrk <= 0)
+            {
+                if (!string.IsNullOrEmpty(zone))
+                    Speech.SayQueued(zone);
+                return;
+            }
+
+            // Don't reveal opponent's face-down cards (mrk known but physically face-down)
+            if (!DuelState.IsMyPlayer(player))
+            {
+                try
+                {
+                    if (!Engine.GetCardFace(player, position, viewIndex))
+                    {
+                        Speech.SayQueued($"Face-down card, {zone}");
+                        return;
+                    }
+                }
+                catch { }
+            }
+
+            CardReader.SpeakCardFromData(mrk, zone, queued: true);
         }
 
         /// <summary>
@@ -336,7 +391,7 @@ namespace BlindDuel
 
         private static string GetZoneName(int player, int position, int viewIndex)
         {
-            string side = player != 0 ? "Opponent's " : "";
+            string side = !DuelState.IsMyPlayer(player) ? "Opponent's " : "";
 
             if (position == Engine.PosMonsterLL) return $"{side}Monster Zone 1";
             if (position == Engine.PosMonsterL) return $"{side}Monster Zone 2";
@@ -366,8 +421,28 @@ namespace BlindDuel
             }
             if (position == Engine.PosExtra) return $"{side}Extra Deck";
             if (position == Engine.PosDeck) return $"{side}Deck";
-            if (position == Engine.PosGrave) return $"{side}Graveyard";
-            if (position == Engine.PosExclude) return $"{side}Banished";
+            if (position == Engine.PosGrave)
+            {
+                try
+                {
+                    int count = Engine.GetCardNum(player, Engine.PosGrave);
+                    if (count > 0)
+                        return $"{side}Graveyard, {count} cards";
+                }
+                catch { }
+                return $"{side}Graveyard";
+            }
+            if (position == Engine.PosExclude)
+            {
+                try
+                {
+                    int count = Engine.GetCardNum(player, Engine.PosExclude);
+                    if (count > 0)
+                        return $"{side}Banished, {count} cards";
+                }
+                catch { }
+                return $"{side}Banished";
+            }
 
             Log.Write($"[FocusField] Unknown position: player={player}, pos={position}, mapped to nothing");
             return null;
@@ -419,7 +494,7 @@ namespace BlindDuel
                         // Hand cards: read from Engine and speak immediately.
                         // Uses CardInfoData (position, cardid, index) as the trigger —
                         // the actual card data comes from the Engine database.
-                        if (data.position == Engine.PosHand && data.player == 0)
+                        if (data.position == Engine.PosHand && DuelState.IsMyPlayer(data.player))
                         {
                             int mrk = data.cardid;
                             if (mrk <= 0) return;
@@ -428,34 +503,34 @@ namespace BlindDuel
                             if (uid > 0 && uid == _lastHandUniqueId) return;
                             if (uid > 0) _lastHandUniqueId = uid;
 
-                            int handCount = Engine.GetCardNum(0, Engine.PosHand);
+                            int handCount = Engine.GetCardNum(data.player, Engine.PosHand);
                             int idx = data.index;
                             string zone = handCount > 0
                                 ? $"Hand, {idx + 1} of {handCount}"
                                 : "Hand";
 
                             Log.Write($"[HandCard] mrk={mrk}, uid={uid}, {zone}");
-                            CardReader.SpeakCardFromData(mrk, zone);
+                            // Queue after game event messages (summon/activation)
+                            // instead of interrupting them
+                            bool queued = DuelState.MessageJustAnnounced;
+                            DuelState.MessageJustAnnounced = false;
+                            // Clear screen/dialog flags — hand navigation confirms
+                            // the screen has been acknowledged (same as field focus)
+                            NavigationState.ScreenJustAnnounced = false;
+                            NavigationState.DialogJustAnnounced = false;
+                            CardReader.SpeakCardFromData(mrk, zone, queued: queued);
                             return;
                         }
 
-                        // Selection lists (Extra Deck summon, material selection, etc.)
-                        if (!DuelState.InSelectionList) return;
-
-                        _pendingMrk = data.cardid;
-                        _pendingUniqueId = data.uniqueid;
+                        // Selection list cards are handled by DuelHandler.OnButtonFocused
+                        // which reads ListCard.m_CardData directly. Nothing to do here.
+                        return;
                     }
                     catch (Exception ex)
                     {
                         Log.Write($"[SetDescription] CardInfoData read failed: {ex.Message}");
-                        if (!DuelState.InSelectionList) return;
-                        _pendingMrk = 0;
-                        _pendingUniqueId = 0;
+                        return;
                     }
-
-                    BlindDuelCore.Instance.CancelInvoke(nameof(BlindDuelCore.ReadCardDelayed));
-                    BlindDuelCore.Instance.Invoke(nameof(BlindDuelCore.ReadCardDelayed), ReadDelay);
-                    return;
                 }
 
                 // Outside duels: read from UI panels (deck editor, card browser, etc.)
@@ -592,8 +667,15 @@ namespace BlindDuel
                 Log.Write($"[InstantMessage] {cleaned}");
                 if (NavigationState.IsInDuel)
                 {
-                    DuelState.MessageJustAnnounced = true;
-                    Speech.SayImmediate(cleaned);
+                    // If a summon/activation just announced, queue after it
+                    // instead of interrupting (effect text arrives ~8ms later)
+                    if (DuelState.MessageJustAnnounced)
+                        Speech.SayQueued(cleaned);
+                    else
+                    {
+                        DuelState.MessageJustAnnounced = true;
+                        Speech.SayImmediate(cleaned);
+                    }
                 }
                 else
                 {
@@ -622,8 +704,13 @@ namespace BlindDuel
                 Log.Write($"[InstantMessageReq] {cleaned}");
                 if (NavigationState.IsInDuel)
                 {
-                    DuelState.MessageJustAnnounced = true;
-                    Speech.SayImmediate(cleaned);
+                    if (DuelState.MessageJustAnnounced)
+                        Speech.SayQueued(cleaned);
+                    else
+                    {
+                        DuelState.MessageJustAnnounced = true;
+                        Speech.SayImmediate(cleaned);
+                    }
                 }
                 else
                 {
@@ -644,36 +731,211 @@ namespace BlindDuel
     }
 
     /// <summary>
-    /// Catches duel action notifications (summons, attacks, etc.) from the game's
-    /// log system. AfterAddLog fires for every duel action with the formatted
-    /// localized text. This catches opponent summon notifications that don't go
-    /// through InstantMessage or TutorialNavigator.
-    /// Dedup against InstantMessageDedup prevents double-speaking effects
-    /// that are already caught by InstantMessage patches.
+    /// Shared helper for duel log patches. Reads ShowCardNameData entries added by
+    /// AddRun*Log methods to announce opponent summons and card activations.
     /// </summary>
-    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AfterAddLog))]
-    class PatchDuelLogAfterAddLog
+    static class DuelLogHelper
     {
-        [HarmonyPostfix]
-        static void Postfix(string __0)
+        public static void AnnounceSummon(DuelLogController instance, int prevCardNameCount, string defaultLabel)
         {
             try
             {
                 if (!NavigationState.IsInDuel) return;
-                if (string.IsNullOrWhiteSpace(__0)) return;
+                if (prevCardNameCount < 0) return;
 
-                string cleaned = TextUtil.StripTags(__0);
-                if (string.IsNullOrWhiteSpace(cleaned)) return;
+                // Try to read the specific summon type and the ACTION's team.
+                // The action's team identifies who performed the summon, which is
+                // more reliable than the card's team (which can differ when using
+                // opponent's monsters as material, e.g. via Quick Effect Link Summon).
+                string summonName = defaultLabel;
+                bool? actionTeam = null;
+                try
+                {
+                    var actionList = instance.m_DataList_ShowAction;
+                    if (actionList != null && actionList.Count > 0)
+                    {
+                        var lastAction = actionList[actionList.Count - 1];
+                        var datac = lastAction.datac;
+                        var actType = datac.acttype;
+                        string specific = GetSummonTypeName(actType);
+                        if (specific != null)
+                            summonName = specific;
+                        actionTeam = datac.team;
+                    }
+                }
+                catch { } // Property call on struct may fail — keep defaultLabel
 
-                // Dedup against InstantMessage to avoid double-speaking effects
-                if (cleaned == InstantMessageDedup.LastMessage) return;
-                InstantMessageDedup.LastMessage = cleaned;
+                // Find new ShowCardNameData entries added by this method
+                var cardList = instance.m_DataList_ShowCardName;
+                if (cardList == null || cardList.Count <= prevCardNameCount) return;
 
-                Log.Write($"[DuelLog] {cleaned}");
-                DuelState.MessageJustAnnounced = true;
-                Speech.SayImmediate(cleaned);
+                for (int i = prevCardNameCount; i < cardList.Count; i++)
+                {
+                    var card = cardList[i];
+                    if (card.isCost) continue;
+
+                    int cardId = card.cardid;
+                    // Prefer action team (who performed the summon) over card team
+                    bool teamValue = actionTeam ?? card.team;
+                    bool isOpponent = DuelState.IsOpponentTeam(teamValue);
+                    string cardName = ResolveCardName(cardId);
+
+                    Log.Write($"[DuelLog] {summonName}: {cardName} (actionTeam={actionTeam}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
+
+                    DuelState.MessageJustAnnounced = true;
+                    string prefix = isOpponent ? "Opponent " : "";
+                    Speech.SayImmediate($"{prefix}{summonName}: {cardName}");
+                    return; // Only announce the first non-cost card
+                }
             }
-            catch (Exception ex) { Log.Write($"[PatchDuelLogAfterAddLog] {ex.Message}"); }
+            catch (Exception ex) { Log.Write($"[DuelLogHelper] {ex.Message}"); }
+        }
+
+        public static void AnnounceActivation(DuelLogController instance, int prevCardNameCount)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+                if (prevCardNameCount < 0) return;
+
+                // Get action team (who performed the activation)
+                bool? actionTeam = null;
+                try
+                {
+                    var actionList = instance.m_DataList_ShowAction;
+                    if (actionList != null && actionList.Count > 0)
+                    {
+                        var lastAction = actionList[actionList.Count - 1];
+                        actionTeam = lastAction.datac.team;
+                    }
+                }
+                catch { }
+
+                var cardList = instance.m_DataList_ShowCardName;
+                if (cardList == null || cardList.Count <= prevCardNameCount) return;
+
+                for (int i = prevCardNameCount; i < cardList.Count; i++)
+                {
+                    var card = cardList[i];
+                    if (card.isCost) continue;
+
+                    int cardId = card.cardid;
+                    bool teamValue = actionTeam ?? card.team;
+                    bool isOpponent = DuelState.IsOpponentTeam(teamValue);
+                    string cardName = ResolveCardName(cardId);
+
+                    Log.Write($"[DuelLog] Activates: {cardName} (actionTeam={actionTeam}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
+
+                    DuelState.MessageJustAnnounced = true;
+                    string prefix = isOpponent ? "Opponent activates" : "Activate";
+                    Speech.SayImmediate($"{prefix}: {cardName}");
+                    return;
+                }
+            }
+            catch (Exception ex) { Log.Write($"[DuelLogHelper] Activation: {ex.Message}"); }
+        }
+
+        public static string ResolveCardName(int cardId)
+        {
+            try
+            {
+                var content = Content.s_instance;
+                if (content != null && cardId > 0)
+                    return content.GetName(cardId);
+            }
+            catch { }
+            return "unknown";
+        }
+
+        /// <summary>
+        /// Returns a specific summon type name, or null if the type is unrecognized
+        /// (so the caller keeps its default label).
+        /// </summary>
+        static string GetSummonTypeName(LOGACTIONTYPE type) => type switch
+        {
+            LOGACTIONTYPE.ACTION_SUMMON => "Summon",
+            LOGACTIONTYPE.ACTION_SPSUMMON => "Special Summon",
+            LOGACTIONTYPE.ACTION_SPSUMMON_RITUAL => "Ritual Summon",
+            LOGACTIONTYPE.ACTION_SPSUMMON_FUSION => "Fusion Summon",
+            LOGACTIONTYPE.ACTION_SPSUMMON_SYNC => "Synchro Summon",
+            LOGACTIONTYPE.ACTION_SPSUMMON_XYZ => "Xyz Summon",
+            LOGACTIONTYPE.ACTION_SPSUMMON_PENDULUM => "Pendulum Summon",
+            LOGACTIONTYPE.ACTION_SPSUMMON_LINK => "Link Summon",
+            LOGACTIONTYPE.ACTION_REVERSESUMMON => "Flip Summon",
+            _ => null
+        };
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddRunSummonLog))]
+    class PatchAddRunSummonLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance, ref int __state)
+        {
+            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
+            catch { __state = -1; }
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance, int __state)
+        {
+            DuelLogHelper.AnnounceSummon(__instance, __state, "Summon");
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddRunSpSummonLog))]
+    class PatchAddRunSpSummonLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance, ref int __state)
+        {
+            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
+            catch { __state = -1; }
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance, int __state)
+        {
+            DuelLogHelper.AnnounceSummon(__instance, __state, "Special Summon");
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddRunFusionLog))]
+    class PatchAddRunFusionLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance, ref int __state)
+        {
+            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
+            catch { __state = -1; }
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance, int __state)
+        {
+            DuelLogHelper.AnnounceSummon(__instance, __state, "Fusion Summon");
+        }
+    }
+
+    /// <summary>
+    /// Announces opponent card activations (effect activation, hand traps, etc.).
+    /// When the opponent activates a card, the player hears the card name
+    /// before/alongside the effect text from InstantMessage.
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddCardHappenLog))]
+    class PatchAddCardHappenLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance, ref int __state)
+        {
+            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
+            catch { __state = -1; }
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance, int __state)
+        {
+            DuelLogHelper.AnnounceActivation(__instance, __state);
         }
     }
 
@@ -788,8 +1050,9 @@ namespace BlindDuel
             DuelState.HasPendingSelection = false;
             QueueDeferredItem();
 
-            // Re-queue what was interrupted by this title.
-            FieldFocusHandler.RequeueLastFocus();
+            // Clear last field focus — the selection list replaces the field
+            // context, so re-queuing the last card would sound like a menu item.
+            FieldFocusHandler.ClearLastFocus();
 
             // Re-queue button text that was queued but then interrupted by SayImmediate
             if (!string.IsNullOrEmpty(DuelState.LastQueuedButtonText))
@@ -886,6 +1149,7 @@ namespace BlindDuel
                 DuelState.HasPendingSelection = true;
                 DuelState.DeferredSelectionButton = null;
                 DuelState.DeferredFieldFocus = null;
+                DuelHandler.ResetSelectionDedup();
             }
         }
 
@@ -1121,6 +1385,322 @@ namespace BlindDuel
                 Speech.SayImmediate(phaseName);
             }
             catch (Exception ex) { Log.Write($"[PatchPhaseChange] {ex.Message}"); }
+        }
+    }
+
+    // ── Duel Log Viewer ──────────────────────────────────────────────
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.Open))]
+    class PatchDuelLogOpen
+    {
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+                DuelState.IsDuelLogOpen = true;
+
+                // Capture controller + scroll view for index polling and team lookup
+                DuelState.LogController = __instance;
+                var sv = __instance.m_ScrollView;
+                DuelState.LogScrollView = sv;
+
+                Log.Write("[DuelLog] Opened");
+                Speech.SayImmediate("Duel Log");
+                DuelLogReader.InitScroll(sv);
+            }
+            catch (Exception ex) { Log.Write($"[PatchDuelLogOpen] {ex.Message}"); }
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.Close))]
+    class PatchDuelLogClose
+    {
+        [HarmonyPostfix]
+        static void Postfix()
+        {
+            try
+            {
+                if (!DuelState.IsDuelLogOpen) return;
+                DuelState.IsDuelLogOpen = false;
+                Log.Write("[DuelLog] Closed");
+            }
+            catch (Exception ex) { Log.Write($"[PatchDuelLogClose] {ex.Message}"); }
+        }
+    }
+
+    [HarmonyPatch(typeof(CardInfo), nameof(CardInfo.SetCardByCardId))]
+    class PatchDuelLogSetCard
+    {
+        [HarmonyPostfix]
+        static void Postfix(int cardid)
+        {
+            try
+            {
+                if (!DuelState.IsDuelLogOpen) return;
+                if (DuelState.InSelectionList) return;
+                if (cardid <= 0) return;
+
+                // Look up team from the log controller's card name data
+                bool isOpponent = false;
+                try
+                {
+                    var controller = DuelState.LogController;
+                    if (controller != null)
+                    {
+                        var cardList = controller.m_DataList_ShowCardName;
+                        if (cardList != null)
+                        {
+                            for (int i = cardList.Count - 1; i >= 0; i--)
+                            {
+                                if (cardList[i].cardid == cardid)
+                                {
+                                    isOpponent = DuelState.IsOpponentTeam(cardList[i].team);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                // Speak card name only (card info panel shows full details)
+                string cardName = DuelLogHelper.ResolveCardName(cardid);
+                string speech = isOpponent ? $"Opponent: {cardName}" : cardName;
+                Log.Write($"[DuelLog-Card] {speech}");
+                Speech.SayItem(speech);
+            }
+            catch (Exception ex) { Log.Write($"[PatchDuelLogSetCard] {ex.Message}"); }
+        }
+    }
+
+    /// <summary>
+    /// Patches OnUpdateShow* methods on DuelLogController.
+    /// These fire when the game renders/updates items in the log scroll view —
+    /// including during user scrolling. Each receives the EOM GameObject
+    /// containing the rendered text for that entry.
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.OnUpdateShowAction))]
+    class PatchDuelLogShowAction
+    {
+        [HarmonyPostfix]
+        static void Postfix(UnityEngine.GameObject eom, int dataindex)
+        {
+            DuelLogReader.CaptureItem(eom, "Action", dataindex);
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.OnUpdateShowCardName))]
+    class PatchDuelLogShowCardName
+    {
+        [HarmonyPostfix]
+        static void Postfix(UnityEngine.GameObject eom, int dataindex)
+        {
+            DuelLogReader.CaptureItem(eom, "CardName", dataindex);
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.OnUpdateShowPhase))]
+    class PatchDuelLogShowPhase
+    {
+        [HarmonyPostfix]
+        static void Postfix(UnityEngine.GameObject eom, int dataindex)
+        {
+            DuelLogReader.CaptureItem(eom, "Phase", dataindex);
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.OnUpdateShowTurn))]
+    class PatchDuelLogShowTurn
+    {
+        [HarmonyPostfix]
+        static void Postfix(UnityEngine.GameObject eom, int dataindex)
+        {
+            DuelLogReader.CaptureItem(eom, "Turn", dataindex);
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.OnUpdateShowText))]
+    class PatchDuelLogShowText
+    {
+        [HarmonyPostfix]
+        static void Postfix(UnityEngine.GameObject eom, int dataindex)
+        {
+            DuelLogReader.CaptureItem(eom, "Text", dataindex);
+        }
+    }
+
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.OnUpdateShowChain))]
+    class PatchDuelLogShowChain
+    {
+        [HarmonyPostfix]
+        static void Postfix(UnityEngine.GameObject eom, int dataindex)
+        {
+            DuelLogReader.CaptureItem(eom, "Chain", dataindex);
+        }
+    }
+
+    /// <summary>
+    /// Captures and reads duel log entries. OnUpdateShow* callbacks store
+    /// rendered text as entries are created during gameplay. When the log
+    /// opens, reads the stored entries. Selection polling reads the
+    /// currently selected entry as the user D-pads through the log.
+    /// </summary>
+    static class DuelLogReader
+    {
+        private static readonly List<string> _entries = new();
+        private static string _lastSpoken = "";
+        private static Il2CppYgomSystem.UI.SelectionItem _lastSelectedItem;
+
+        /// <summary>
+        /// Capture text from an OnUpdateShow* callback.
+        /// Called during gameplay as log entries are created.
+        /// Stores the rendered text for later reading.
+        /// </summary>
+        public static void CaptureItem(UnityEngine.GameObject eom, string type, int dataindex)
+        {
+            try
+            {
+                if (eom == null) return;
+                var results = TextExtractor.ExtractAll(eom);
+                if (results.Count == 0) return;
+                string text = string.Join(", ", results.ConvertAll(r => r.Text));
+                if (string.IsNullOrWhiteSpace(text)) return;
+
+                _entries.Add(text);
+                Log.Write($"[DuelLog-Item] [{type}:{dataindex}] {text}");
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Read recent log entries when the log opens.
+        /// Speaks the last several captured entries.
+        /// </summary>
+        public static void ReadRecentEntries()
+        {
+            try
+            {
+                if (_entries.Count == 0)
+                {
+                    Speech.SayQueued("No entries");
+                    Log.Write("[DuelLog-Read] No entries");
+                    return;
+                }
+
+                // Read the last few entries (most recent actions)
+                int start = Math.Max(0, _entries.Count - 8);
+                var recent = new List<string>();
+                for (int i = start; i < _entries.Count; i++)
+                    recent.Add(_entries[i]);
+
+                string combined = string.Join(". ", recent);
+                Log.Write($"[DuelLog-Read] {combined}");
+                Speech.SayQueued(combined);
+            }
+            catch (Exception ex) { Log.Write($"[DuelLog-Read] {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Initialize selection tracking when the log opens.
+        /// </summary>
+        public static void InitScroll(DuelLogScrollView sv)
+        {
+            _lastSelectedItem = null;
+            _lastSpoken = "";
+            Log.Write("[DuelLog] Selection tracking initialized");
+        }
+
+        /// <summary>
+        /// Poll the selector's selected item each frame while the log is open.
+        /// When D-pad changes the selection, reads the newly selected entry.
+        /// The SelectionItem itself has no text — the visual content is in a
+        /// sibling or parent element, so we search up the hierarchy.
+        /// Called from BlindDuelCore.Update().
+        /// </summary>
+        public static void PollSelection()
+        {
+            try
+            {
+                var sv = DuelState.LogScrollView;
+                if (sv == null) return;
+
+                var selector = sv.selector;
+                if (selector == null) return;
+
+                var selected = selector.GetSelectedItem();
+                if (selected == null) return;
+
+                // Same item — no change
+                if (selected == _lastSelectedItem) return;
+                _lastSelectedItem = selected;
+
+                // Clear dedup on every selection change so returning to a
+                // previously-spoken entry still reads it
+                _lastSpoken = "";
+
+                var go = selected.gameObject;
+                if (go == null) return;
+
+                string text = null;
+                var itemName = go.name;
+
+                // LP face icons: read individual player LP from Engine
+                if (itemName == "FaceIconL" || itemName == "FaceIconR")
+                {
+                    int player = itemName == "FaceIconL" ? 0 : 1;
+                    int lp = DuelClient.GetLP(player);
+                    string label = DuelState.IsMyPlayer(player) ? "Your" : "Opponent";
+                    text = $"{label} LP: {lp}";
+                }
+
+                // Card entries (Card0/Card1/...) are handled by PatchDuelLogSetCard
+                // via CardInfo.SetCardByCardId — skip here
+                if (text == null && itemName.StartsWith("Card") && go.transform.parent?.name == "CardRoot")
+                    return;
+
+                // Try the item's text, then parent, then grandparent
+                if (text == null)
+                {
+                    var transform = go.transform;
+                    var results = TextExtractor.ExtractAll(go);
+                    if (results.Count > 0)
+                        text = string.Join(", ", results.ConvertAll(r => r.Text));
+
+                    if (string.IsNullOrWhiteSpace(text) && transform.parent != null)
+                    {
+                        results = TextExtractor.ExtractAll(transform.parent.gameObject);
+                        if (results.Count > 0)
+                            text = string.Join(", ", results.ConvertAll(r => r.Text));
+                    }
+
+                    if (string.IsNullOrWhiteSpace(text) && transform.parent?.parent != null)
+                    {
+                        results = TextExtractor.ExtractAll(transform.parent.parent.gameObject);
+                        if (results.Count > 0)
+                            text = string.Join(", ", results.ConvertAll(r => r.Text));
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    Log.Write($"[DuelLog-Poll] No text: {itemName}");
+                    return;
+                }
+
+                _lastSpoken = text;
+                Log.Write($"[DuelLog-Nav] {text}");
+                Speech.SayItem(text);
+            }
+            catch (Exception ex) { Log.Write($"[DuelLog-Poll] {ex.Message}"); }
+        }
+
+        public static void Reset()
+        {
+            _entries.Clear();
+            _lastSpoken = "";
+            _lastSelectedItem = null;
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using Il2CppTMPro;
+using Il2CppYgomGame.Duel;
 using Il2CppYgomSystem.UI;
 using Il2CppYgomSystem.YGomTMPro;
 using HarmonyLib;
@@ -66,12 +67,11 @@ namespace BlindDuel
                 string parentName = parent.name;
                 string grandparentName = grandparent.name;
 
-                // Duel card list — click to trigger card info panel (SetDescriptionArea patch handles reading)
+                // Duel card list — SetDescriptionArea fires natively when the game
+                // focuses a card. No need to Click() here (it would fire for ALL
+                // cards during list initialization, reading every card aloud).
                 if (NavigationState.IsInDuel && parentName.Contains("DuelListCard"))
-                {
-                    parent.GetComponent<SelectionButton>().Click();
                     return;
-                }
 
                 string text = null;
 
@@ -161,9 +161,22 @@ namespace BlindDuel
             // OnSelected returns false when the button was already selected — skip duplicate fires
             if (!__result) return;
 
+            // Duel log handles its own navigation via PollSelection
+            if (DuelState.IsDuelLogOpen) return;
+
             // Same button re-fired (rapid deselect/reselect) — skip to prevent
-            // handler state mutation producing different text on second fire
-            if (Speech.IsSameButton(__instance)) return;
+            // handler state mutation producing different text on second fire.
+            // Exception: card selection lists recycle button objects (object pooling),
+            // so the same reference can represent a different card after scrolling.
+            if (Speech.IsSameButton(__instance))
+            {
+                try
+                {
+                    if (__instance.GetComponentInParent<Il2CppYgomGame.Duel.CardSelectionList>() == null)
+                        return;
+                }
+                catch { return; }
+            }
 
             // Screen announcement pending — capture the button for QueueFocusedItem
             // instead of speaking now (avoids speaking items before the header)
@@ -233,23 +246,24 @@ namespace BlindDuel
                 NavigationState.DialogJustAnnounced = false;
                 NavigationState.ScreenJustAnnounced = false;
                 DuelState.MessageJustAnnounced = false;
-
-                if (NavigationState.IsInDuel)
-                {
-                    // Don't speak — store silently. If a dialog follows (same frame),
-                    // HandleTitle will re-queue it after the message. If not,
-                    // Update() will speak it on the next frame.
-                    DuelState.LastQueuedButtonText = text;
-                    DuelState.LastQueuedButtonFrame = UnityEngine.Time.frameCount;
-                    return;
-                }
-
-                Speech.SayQueued(text);
             }
-            else
+
+            if (NavigationState.IsInDuel)
             {
-                Speech.SayItem(text);
+                // Defer all duel buttons by one frame. This ensures dialogs/prompts
+                // that fire in the same frame (e.g. "Select battle position") speak
+                // BEFORE the auto-focused button, not after.
+                // If no dialog fires, Update() speaks it on the next frame (~16ms).
+                DuelState.LastQueuedButtonText = text;
+                DuelState.LastQueuedButtonFrame = UnityEngine.Time.frameCount;
+                DuelState.LastQueuedButtonInterrupt = !shouldQueue;
+                return;
             }
+
+            if (shouldQueue)
+                Speech.SayQueued(text);
+            else
+                Speech.SayItem(text);
         }
     }
 

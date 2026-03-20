@@ -9,6 +9,14 @@ namespace BlindDuel
         // Pending selection list index to queue after card speech
         private static string _pendingSelectionIndex;
 
+        // Dedup: same card is never read twice in a row.
+        // Fires 1-3 during list setup all have the same cardid → only first reads.
+        // Navigating to a different card resets naturally.
+        private static int _lastSelCardId;
+
+        /// <summary>Reset selection dedup when a new list opens.</summary>
+        public static void ResetSelectionDedup() => _lastSelCardId = 0;
+
         public bool CanHandle(string viewControllerName) =>
             viewControllerName is "DuelClient" or "DuelLive";
 
@@ -42,9 +50,32 @@ namespace BlindDuel
                             var data = listCard.m_CardData;
                             if (data != null && data.cardid > 0)
                             {
-                                string index = GetSelectionIndex(button);
-                                bool queued = PatchCardSelectionListSetTitle.ConsumeQueuedFlag();
-                                CardReader.SpeakCardFromData(data.cardid, index, queued: queued);
+                                // Dedup: OnSelected fires 3 times during list setup
+                                // (initial focus, priority recalc, delayed settle).
+                                // All have the same cardid — skip if unchanged.
+                                if (data.cardid == _lastSelCardId)
+                                    return "";
+                                _lastSelCardId = data.cardid;
+
+                                // Don't reveal cards the player doesn't know about
+                                // (opponent's face-down cards in target selection lists)
+                                try
+                                {
+                                    if (!data.isknown)
+                                    {
+                                        string index = GetSelectionIndex(button);
+                                        string msg = index != null ? $"Face-down card, {index}" : "Face-down card";
+                                        bool queued = PatchCardSelectionListSetTitle.ConsumeQueuedFlag();
+                                        if (queued) Speech.SayQueued(msg);
+                                        else Speech.SayItem(msg);
+                                        return "";
+                                    }
+                                }
+                                catch { }
+
+                                string index2 = GetSelectionIndex(button);
+                                bool queued2 = PatchCardSelectionListSetTitle.ConsumeQueuedFlag();
+                                CardReader.SpeakCardFromData(data.cardid, index2, queued: queued2);
                                 return "";
                             }
                         }
