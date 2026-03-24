@@ -90,6 +90,12 @@ namespace BlindDuel
                 FieldFocusHandler.Subscribe(__instance);
             }
             catch (Exception ex) { Log.Write($"[DuelClientAwake] Focus subscribe failed: {ex.Message}"); }
+
+            try
+            {
+                AttackTargetHandler.Subscribe(__instance);
+            }
+            catch (Exception ex) { Log.Write($"[DuelClientAwake] Attack subscribe failed: {ex.Message}"); }
         }
     }
 
@@ -136,8 +142,9 @@ namespace BlindDuel
                 if (!NavigationState.IsInDuel || !DuelState.HasPhaseStarted) return;
                 if (DuelState.IsShowingResult) return;
 
-                // Player left the hand — reset hand dedup so re-entering reads correctly
+                // Player left the hand/selection — reset dedup so re-entering reads correctly
                 PatchCardInfoSetDescription.ResetHandDedup();
+                DuelHandler.ResetSelectionDedup();
 
                 // Selection list pending — defer field focus until title is spoken.
                 if (DuelState.HasPendingSelection)
@@ -229,6 +236,8 @@ namespace BlindDuel
                                 : "Face-down card";
                             Log.Write($"[FocusField] {msg}");
                             SpeakField(msg, queued);
+                            DuelState.CardDetailLines = null;
+                            DuelState.CardDetailIndex = 0;
                             _lastUniqueId = 0;
                             return;
                         }
@@ -244,6 +253,8 @@ namespace BlindDuel
                         Log.Write($"[FocusField] Empty: {zone}");
                         SpeakField(zone, queued);
                     }
+                    DuelState.CardDetailLines = null;
+                    DuelState.CardDetailIndex = 0;
                     _lastUniqueId = 0;
                     return;
                 }
@@ -261,6 +272,8 @@ namespace BlindDuel
                                 : "Face-down card";
                             Log.Write($"[FocusField] {msg}");
                             SpeakField(msg, queued);
+                            DuelState.CardDetailLines = null;
+                            DuelState.CardDetailIndex = 0;
                             _lastUniqueId = uniqueId;
                             return;
                         }
@@ -272,30 +285,63 @@ namespace BlindDuel
                 if (uniqueId > 0 && uniqueId == _lastUniqueId) return;
                 if (uniqueId > 0) _lastUniqueId = uniqueId;
 
-                // Battle position and live stats for monster zones
+                // Check if Link monster (no DEF, always Attack Mode)
+                bool isLink = false;
+                try
+                {
+                    var content = Content.s_instance;
+                    if (content != null)
+                        isLink = content.GetFrame(mrk) == Content.Frame.Link;
+                }
+                catch { }
+
+                // Battle mode and live stats for monster zones
                 string battlePos = null;
                 int? liveAtk = null, liveDef = null;
                 if (IsMonsterZone(position))
                 {
-                    try
+                    if (isLink)
                     {
-                        bool face = Engine.GetCardFace(player, position, viewIndex);
-                        bool turn = Engine.GetCardTurn(player, position, viewIndex);
-                        battlePos = !face ? "Set" : turn ? "Defense Position" : "Attack Position";
+                        battlePos = "Attack Mode";
                     }
-                    catch (Exception ex) { Log.Write($"[FocusField] Position check: {ex.Message}"); }
+                    else
+                    {
+                        try
+                        {
+                            bool face = Engine.GetCardFace(player, position, viewIndex);
+                            bool turn = Engine.GetCardTurn(player, position, viewIndex);
+                            battlePos = !face ? "Set" : turn ? "Defense Mode" : "Attack Mode";
+                        }
+                        catch (Exception ex) { Log.Write($"[FocusField] Battle mode check: {ex.Message}"); }
+                    }
+                }
 
+                // Live stats via unique ID (works for all zones including Extra Monster)
+                if (uniqueId > 0)
+                {
                     try
                     {
-                        var bv = new Engine.BasicVal();
-                        Engine.GetCardBasicVal(player, position, viewIndex, ref bv);
+                        var bv = Engine.GetBasicValByUniqueId(uniqueId);
                         liveAtk = bv.Atk;
-                        liveDef = bv.Def;
+                        if (!isLink) liveDef = bv.Def;
                     }
                     catch (Exception ex) { Log.Write($"[FocusField] BasicVal: {ex.Message}"); }
                 }
 
-                CardReader.SpeakCardFromData(mrk, zone, liveAtk, liveDef, queued, battlePos);
+                // Read card, override live stats, build detail lines for Ctrl+Up/Down
+                var card = CardReader.ReadCardFromData(mrk);
+                if (liveAtk.HasValue && !string.IsNullOrEmpty(card.Atk))
+                    card.Atk = liveAtk.Value >= 0 ? liveAtk.Value.ToString() : "?";
+                if (liveDef.HasValue && !string.IsNullOrEmpty(card.Def))
+                    card.Def = liveDef.Value >= 0 ? liveDef.Value.ToString() : "?";
+
+                var lines = card.GetDetailLines(out string summary, battlePosition: battlePos, zone: zone);
+                DuelState.CardDetailLines = lines;
+                DuelState.CardDetailIndex = 0;
+
+                // Speak only the summary (name + position + zone)
+                if (!string.IsNullOrEmpty(summary))
+                    SpeakField(summary, queued);
             }
             catch (Exception ex) { Log.Write($"[PatchInvokeFocusField] {ex.Message}"); }
         }
@@ -458,6 +504,61 @@ namespace BlindDuel
     }
 
     /// <summary>
+    /// Announces opponent attack declarations via the game's native delegate.
+    /// Fires when any monster declares an attack target.
+    /// </summary>
+    static class AttackTargetHandler
+    {
+        private static DuelClient.onDecideAttackTargetDelegate _handler;
+
+        public static void Subscribe(DuelClient client)
+        {
+            _handler = (Action<int, int, int, int, int, int>)OnAttackDeclared;
+            client.add_onDecideAttackTargetHandler(_handler);
+            Log.Write("[AttackTarget] Subscribed to onDecideAttackTargetHandler");
+        }
+
+        static void OnAttackDeclared(int attackerPlayer, int attackerPosition, int attackerIndex,
+            int targetPlayer, int targetPosition, int targetIndex)
+        {
+            try
+            {
+                // Only announce opponent's attacks
+                if (DuelState.IsMyPlayer(attackerPlayer)) return;
+
+                var content = Content.s_instance;
+                if (content == null) return;
+
+                // Get attacker name
+                int attackerMrk = 0;
+                try { attackerMrk = Engine.GetCardID(attackerPlayer, attackerPosition, attackerIndex); }
+                catch { }
+                string attackerName = attackerMrk > 0 ? content.GetName(attackerMrk) : "Unknown monster";
+
+                // Get target — direct attack if no card at target position
+                int targetMrk = 0;
+                try { targetMrk = Engine.GetCardID(targetPlayer, targetPosition, targetIndex); }
+                catch { }
+
+                string announcement;
+                if (targetMrk > 0)
+                {
+                    string targetName = content.GetName(targetMrk);
+                    announcement = $"Opponent attacks {targetName} with {attackerName}";
+                }
+                else
+                {
+                    announcement = $"Opponent attacks directly with {attackerName}";
+                }
+
+                Log.Write($"[AttackTarget] {announcement}");
+                Speech.SayQueued(announcement);
+            }
+            catch (Exception ex) { Log.Write($"[AttackTarget] {ex.Message}"); }
+        }
+    }
+
+    /// <summary>
     /// Card info panel reading — fires when any card gets focused in the duel.
     /// During duels:
     ///   - Hand cards: read directly from Engine database using CardInfoData.cardid
@@ -518,7 +619,19 @@ namespace BlindDuel
                             // the screen has been acknowledged (same as field focus)
                             NavigationState.ScreenJustAnnounced = false;
                             NavigationState.DialogJustAnnounced = false;
-                            CardReader.SpeakCardFromData(mrk, zone, queued: queued);
+
+                            // Read card, build detail lines for Ctrl+Up/Down
+                            BlindDuelCore.Preview.Clear();
+                            var card = CardReader.ReadCardFromData(mrk);
+                            var lines = card.GetDetailLines(out string summary, zone: zone);
+                            DuelState.CardDetailLines = lines;
+                            DuelState.CardDetailIndex = 0;
+
+                            if (!string.IsNullOrEmpty(summary))
+                            {
+                                if (queued) Speech.SayQueued(summary);
+                                else Speech.SayItem(summary);
+                            }
                             return;
                         }
 
@@ -758,7 +871,7 @@ namespace BlindDuel
                 // Find the newly added action (not the last one overall —
                 // the list accumulates across the entire duel).
                 string summonName = defaultLabel;
-                bool? actionTeam = null;
+                int? actionOwner = null;
                 try
                 {
                     var actionList = instance.m_DataList_ShowAction;
@@ -771,7 +884,10 @@ namespace BlindDuel
                         string specific = GetSummonTypeName(actType);
                         if (specific != null)
                             summonName = specific;
-                        actionTeam = datac.team;
+                        // Use datal.owner (actual player number) instead of datac.team
+                        // (which reflects turn player, not card owner)
+                        try { actionOwner = newAction.datal.owner; }
+                        catch { }
                     }
                 }
                 catch { } // Property call on struct may fail — keep defaultLabel
@@ -786,12 +902,13 @@ namespace BlindDuel
                     if (card.isCost) continue;
 
                     int cardId = card.cardid;
-                    // Prefer action team (who performed the summon) over card team
-                    bool teamValue = actionTeam ?? card.team;
-                    bool isOpponent = DuelState.IsOpponentTeam(teamValue);
+                    // Use datal.owner (player number) for accurate ownership
+                    bool isOpponent = actionOwner.HasValue
+                        ? !DuelState.IsMyPlayer(actionOwner.Value)
+                        : DuelState.IsOpponentTeam(card.team);
                     string cardName = ResolveCardName(cardId);
 
-                    Log.Write($"[DuelLog] {summonName}: {cardName} (actionTeam={actionTeam}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
+                    Log.Write($"[DuelLog] {summonName}: {cardName} (owner={actionOwner}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
 
                     DuelState.MessageJustAnnounced = true;
                     string prefix = isOpponent ? "Opponent " : "";
@@ -809,15 +926,16 @@ namespace BlindDuel
                 if (!NavigationState.IsInDuel) return;
                 if (prevCardNameCount < 0) return;
 
-                // Get action team from the newly added action
-                bool? actionTeam = null;
+                // Get action owner from the newly added action
+                int? actionOwner = null;
                 try
                 {
                     var actionList = instance.m_DataList_ShowAction;
                     if (actionList != null && _prevActionCount >= 0
                         && actionList.Count > _prevActionCount)
                     {
-                        actionTeam = actionList[_prevActionCount].datac.team;
+                        try { actionOwner = actionList[_prevActionCount].datal.owner; }
+                        catch { }
                     }
                 }
                 catch { }
@@ -831,11 +949,12 @@ namespace BlindDuel
                     if (card.isCost) continue;
 
                     int cardId = card.cardid;
-                    bool teamValue = actionTeam ?? card.team;
-                    bool isOpponent = DuelState.IsOpponentTeam(teamValue);
+                    bool isOpponent = actionOwner.HasValue
+                        ? !DuelState.IsMyPlayer(actionOwner.Value)
+                        : DuelState.IsOpponentTeam(card.team);
                     string cardName = ResolveCardName(cardId);
 
-                    Log.Write($"[DuelLog] Activates: {cardName} (actionTeam={actionTeam}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
+                    Log.Write($"[DuelLog] Activates: {cardName} (owner={actionOwner}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
 
                     DuelState.MessageJustAnnounced = true;
                     string prefix = isOpponent ? "Opponent activates" : "Activate";
@@ -1024,6 +1143,8 @@ namespace BlindDuel
         {
             try
             {
+                PatchDuelSelectDialogUpdateMessage.ResetDedup();
+
                 if (string.IsNullOrWhiteSpace(message)) return;
                 string cleaned = TextUtil.StripTags(message);
                 if (string.IsNullOrWhiteSpace(cleaned)) return;
@@ -1033,6 +1154,43 @@ namespace BlindDuel
             }
             catch (Exception ex) { Log.Write($"[PatchDuelSelectDialogOpen] {ex.Message}"); }
         }
+    }
+
+    /// <summary>
+    /// Announces the card/effect when navigating between tabs in a DuelSelectDialog
+    /// (e.g., the "Activate a card or effect?" popup). The card tabs are SelectionItems,
+    /// not SelectionButtons, so our OnSelected patch doesn't fire for them.
+    /// UpdateMessage fires when the selected tab changes (both focus and confirm).
+    /// </summary>
+    [HarmonyPatch(typeof(DuelSelectDialog), nameof(DuelSelectDialog.UpdateMessage))]
+    class PatchDuelSelectDialogUpdateMessage
+    {
+        private static int _lastIndex = -1;
+
+        [HarmonyPostfix]
+        static void Postfix(DuelSelectDialog __instance, int effectIndex)
+        {
+            try
+            {
+                if (effectIndex == _lastIndex) return;
+                _lastIndex = effectIndex;
+
+                var infoList = __instance.infoList;
+                if (infoList == null || effectIndex < 0 || effectIndex >= infoList.Count) return;
+
+                string message = infoList[effectIndex].message;
+                if (string.IsNullOrWhiteSpace(message)) return;
+
+                string cleaned = TextUtil.StripTags(message);
+                if (string.IsNullOrWhiteSpace(cleaned)) return;
+
+                Log.Write($"[DuelSelectTab] Tab {effectIndex}: {cleaned}");
+                Speech.SayItem(cleaned);
+            }
+            catch (Exception ex) { Log.Write($"[PatchDuelSelectDialogUpdateMessage] {ex.Message}"); }
+        }
+
+        public static void ResetDedup() => _lastIndex = -1;
     }
 
     /// <summary>
@@ -1165,6 +1323,7 @@ namespace BlindDuel
                 DuelState.DeferredSelectionButton = null;
                 DuelState.DeferredFieldFocus = null;
                 DuelHandler.ResetSelectionDedup();
+                PatchCardSelectionListSetTitle.ResetDedup();
             }
         }
 

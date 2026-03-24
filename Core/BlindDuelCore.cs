@@ -17,16 +17,21 @@ namespace BlindDuel
             Instance = this;
             Log.Init();
             ScreenReader.Initialize();
+            SDLController.Initialize();
             HandlerRegistry.Init();
         }
 
         public void OnApplicationQuit()
         {
+            SDLController.Shutdown();
             ScreenReader.Shutdown();
         }
 
         public void Update()
         {
+            // Poll SDL3 controller state
+            SDLController.Update();
+
             // Duel hotkeys
             if (NavigationState.IsInDuel)
             {
@@ -35,6 +40,47 @@ namespace BlindDuel
                     int myLP = DuelClient.GetLP(0);
                     int oppLP = DuelClient.GetLP(1);
                     Speech.SayImmediate($"Your life points: {myLP}\nOpponent's life points: {oppLP}");
+                }
+
+                // Card detail line-by-line navigation (Ctrl+Up/Down or Right Stick Up/Down)
+                // Index starts at 0 (Name, already spoken). Down goes to 1+.
+                // Up from 0 or Down past last line = silence.
+                bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                bool detailDown = ctrlHeld && Input.GetKeyDown(KeyCode.DownArrow);
+                bool detailUp = ctrlHeld && Input.GetKeyDown(KeyCode.UpArrow);
+
+                // Right stick on controller via SDL3
+                if (!detailDown && !detailUp)
+                {
+                    if (SDLController.RightStickDownTriggered) detailDown = true;
+                    else if (SDLController.RightStickUpTriggered) detailUp = true;
+                }
+
+                if (detailDown)
+                {
+                    var lines = DuelState.CardDetailLines;
+                    if (lines != null)
+                    {
+                        int idx = DuelState.CardDetailIndex + 1;
+                        if (idx < lines.Count)
+                        {
+                            DuelState.CardDetailIndex = idx;
+                            Speech.SayImmediate(lines[idx]);
+                        }
+                    }
+                }
+                else if (detailUp)
+                {
+                    var lines = DuelState.CardDetailLines;
+                    if (lines != null)
+                    {
+                        int idx = DuelState.CardDetailIndex - 1;
+                        if (idx >= 0)
+                        {
+                            DuelState.CardDetailIndex = idx;
+                            Speech.SayImmediate(lines[idx]);
+                        }
+                    }
                 }
 
                 if (Input.GetKeyDown(KeyCode.LeftAlt))

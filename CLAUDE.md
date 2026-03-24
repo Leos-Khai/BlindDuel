@@ -73,6 +73,15 @@ Game assemblies referenced from `../Master-Duels-BlindMode/libs/` (relative path
 - **One handler per screen** — Every navigable screen should have its own handler. The generic fallback in ScreenDetector is a discovery tool for unhandled screens, not a long-term solution.
 - **Use localized game data** — Read text from the game's own UI elements/properties. Never hardcode English strings for content the game provides in multiple languages.
 
+## Duel Handler: Fragile — Read Carefully Before Changing
+
+The duel handler, DuelPatches, and related duel code (DuelState, CardReader duel paths) are **fragile and tightly coupled**. Adding or modifying features can break other duel functionality in non-obvious ways. Before making any duel-related changes:
+
+1. **Research and present findings BEFORE fixing** — always investigate the decompiled game code and mod code first, present your analysis to the user, and only implement fixes after approval
+2. **Read all relevant sections multiple times** — both the mod code (DuelPatches.cs, DuelHandler.cs, CardReader.cs) and the decompiled game code (Engine, CardInfo, DuelClient)
+3. **Trace the full call path** — understand which patch fires, what state it reads/writes, and what downstream effects it has
+4. **Test broadly** — a change to field focus can break hand cards, selection lists, or deferred speech
+
 ## Future Improvement: Detection & Patch Layer
 
 The current `ScreenDetector`, `ButtonPatches`, and `TransformSearch` layer has known hacky workarounds that should eventually be rewritten using proper game APIs from decompiled source:

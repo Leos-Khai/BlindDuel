@@ -84,7 +84,9 @@ namespace BlindDuel
                         catch (Exception ex) { Log.Write($"[DuelHandler] ListCard read: {ex.Message}"); }
                     }
 
-                    // No ListCard (cancel/confirm button) — fall through to default text
+                    // No ListCard (cancel/confirm button) — reset card dedup so
+                    // navigating back to a card re-reads it.
+                    _lastSelButton = null;
                     return null;
                 }
             }

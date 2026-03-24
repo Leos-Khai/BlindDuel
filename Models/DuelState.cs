@@ -87,6 +87,19 @@ namespace BlindDuel
         public static bool SuppressNextFieldFocus { get; set; }
 
         /// <summary>
+        /// Card detail lines for Ctrl+Up/Down navigation.
+        /// [0] = summary (already spoken), [1+] = detail lines.
+        /// Null when no card is focused or detail reading is unavailable.
+        /// </summary>
+        public static List<string> CardDetailLines { get; set; }
+
+        /// <summary>
+        /// Current position in CardDetailLines for Ctrl+Up/Down.
+        /// 0 = summary (already spoken), 1+ = detail lines.
+        /// </summary>
+        public static int CardDetailIndex { get; set; }
+
+        /// <summary>
         /// Button deferred during selection setup. Queued after the title speaks.
         /// </summary>
         public static SelectionButton DeferredSelectionButton { get; set; }
@@ -109,6 +122,8 @@ namespace BlindDuel
             MessageJustAnnounced = false;
             HasPendingSelection = false;
             SuppressNextFieldFocus = false;
+            CardDetailLines = null;
+            CardDetailIndex = 0;
             LastQueuedButtonText = null;
             DeferredSelectionButton = null;
             DeferredFieldFocus = null;
