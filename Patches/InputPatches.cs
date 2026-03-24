@@ -80,6 +80,7 @@ namespace BlindDuel
         private static int _btnL2, _btnR2;
         private static int _btnOption1;
         private static int _btnOption2;
+        private static int _btnL1, _btnR1;
         private static int _btnL3;
 
 
@@ -101,6 +102,8 @@ namespace BlindDuel
                 _btnR2 = GamePad.BUTTON_R2;
                 _btnOption1 = SelectorManager.GetGamePadKeyConfig(SelectorManager.KeyType.Option1);
                 _btnOption2 = SelectorManager.GetGamePadKeyConfig(SelectorManager.KeyType.Option2);
+                _btnL1 = GamePad.BUTTON_L1;
+                _btnR1 = GamePad.BUTTON_R1;
                 _btnL3 = GamePad.BUTTON_L3;
 
                 return new Dictionary<int, KeyCode>
@@ -117,6 +120,8 @@ namespace BlindDuel
                     { _btnR2, KeyCode.X },         // Right trigger
                     { _btnOption1, KeyCode.Tab },  // Start/Menu button
                     { _btnOption2, KeyCode.Escape }, // Touchpad (duel settings/concede)
+                    { _btnL1, KeyCode.I },         // Left bumper
+                    { _btnR1, KeyCode.O },         // Right bumper
                     { _btnL3, KeyCode.D },         // Left stick click
                 };
             }
