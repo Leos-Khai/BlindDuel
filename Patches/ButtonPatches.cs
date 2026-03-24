@@ -130,6 +130,45 @@ namespace BlindDuel
     class PatchOnSelected
     {
         /// <summary>
+        /// Read item name + count from dialog item templates (works across all screens).
+        /// Handles "Item Obtained" and similar dialogs with Template(Clone)/ItemNameText pattern.
+        /// </summary>
+        static string TryReadDialogItem(Transform buttonTransform)
+        {
+            try
+            {
+                Transform current = buttonTransform;
+                for (int i = 0; i < 5 && current != null; i++)
+                {
+                    var tmps = current.GetComponentsInChildren<Il2CppTMPro.TextMeshProUGUI>();
+                    string itemName = null;
+                    string itemNum = null;
+
+                    foreach (var tmp in tmps)
+                    {
+                        if (tmp.gameObject.name == "ItemNameText")
+                            itemName = tmp.text?.Trim();
+                        else if (tmp.gameObject.name == "ItemNumText")
+                            itemNum = tmp.text?.Trim();
+                    }
+
+                    if (!string.IsNullOrEmpty(itemName))
+                    {
+                        if (!string.IsNullOrEmpty(itemNum))
+                        {
+                            itemNum = itemNum.TrimStart('×', 'x', 'X', ' ');
+                            return $"{itemName} x{itemNum}";
+                        }
+                        return itemName;
+                    }
+                    current = current.parent;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
         /// Search sibling elements for text (handles toggle/radio widgets).
         /// </summary>
         static string FindSiblingText(Transform start)
@@ -224,6 +263,17 @@ namespace BlindDuel
                 enhanced = handler.OnButtonFocused(__instance);
                 if (enhanced != null)
                     text = enhanced;
+            }
+
+            // Dialog item list fallback: any screen's dialog with ItemNameText/ItemNumText
+            if (enhanced == null)
+            {
+                string dialogItem = TryReadDialogItem(__instance.transform);
+                if (dialogItem != null)
+                {
+                    text = dialogItem;
+                    enhanced = dialogItem;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(text)) return;

@@ -65,6 +65,11 @@ namespace BlindDuel
 
                         if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(body)) return;
 
+                        // Build item list body for reward/item dialogs
+                        string itemBody = BuildItemListBody(texts);
+                        if (!string.IsNullOrEmpty(itemBody))
+                            body = itemBody;
+
                         NavigationState.LastDialogTitle = dialogKey;
                         string announcement = ElementReader.FormatAnnouncement(title, body);
 
@@ -80,6 +85,37 @@ namespace BlindDuel
                     NavigationState.LastDialogTitle = "";
             }
             catch (Exception ex) { Log.Write($"[DialogDetector] {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Build a body string from ItemNameText/ItemNumText pairs found in dialog scans.
+        /// Returns null if no item list pattern is found.
+        /// </summary>
+        private static string BuildItemListBody(List<TextResult> texts)
+        {
+            // Collect ItemNameText and ItemNumText entries in order
+            var names = new List<string>();
+            var nums = new List<string>();
+
+            foreach (var r in texts)
+            {
+                if (r.Path.EndsWith("ItemNameText"))
+                    names.Add(r.Text);
+                else if (r.Path.EndsWith("ItemNumText"))
+                    nums.Add(r.Text?.TrimStart('×', 'x', 'X', ' ') ?? "");
+            }
+
+            if (names.Count == 0) return null;
+
+            var items = new List<string>();
+            for (int i = 0; i < names.Count; i++)
+            {
+                string name = names[i];
+                string num = i < nums.Count ? nums[i] : "";
+                items.Add(!string.IsNullOrEmpty(num) ? $"{name} x{num}" : name);
+            }
+
+            return string.Join(", ", items);
         }
 
         /// <summary>
@@ -104,7 +140,11 @@ namespace BlindDuel
                 if (string.IsNullOrEmpty(title)) return;
 
                 // Mark as announced so Poll() won't re-announce
-                NavigationState.LastDialogTitle = eom.name;
+                // Strip "(Clone)" to match Poll()'s key format
+                string eomKey = eom.name;
+                if (eomKey.EndsWith("(Clone)"))
+                    eomKey = eomKey[..^7];
+                NavigationState.LastDialogTitle = eomKey;
 
                 string announcement = ElementReader.FormatAnnouncement(title, body);
                 Log.Write($"[Dialog-VC] {vc.name}: title='{title}', body='{body}'");
