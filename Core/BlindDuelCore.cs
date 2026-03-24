@@ -12,6 +12,7 @@ namespace BlindDuel
         // Current preview data for card/item reading
         public static PreviewData Preview { get; } = new();
 
+
         public void Awake()
         {
             Instance = this;
@@ -35,13 +36,6 @@ namespace BlindDuel
             // Duel hotkeys
             if (NavigationState.IsInDuel)
             {
-                if (Input.GetKeyDown(KeyCode.Space))
-                {
-                    int myLP = DuelClient.GetLP(0);
-                    int oppLP = DuelClient.GetLP(1);
-                    Speech.SayImmediate($"Your life points: {myLP}\nOpponent's life points: {oppLP}");
-                }
-
                 // Card detail line-by-line navigation (Ctrl+Up/Down or Right Stick Up/Down)
                 // Index starts at 0 (Name, already spoken). Down goes to 1+.
                 // Up from 0 or Down past last line = silence.
@@ -83,6 +77,7 @@ namespace BlindDuel
                     }
                 }
 
+
                 if (Input.GetKeyDown(KeyCode.LeftAlt))
                 {
                     Preview.Clear();
@@ -94,6 +89,27 @@ namespace BlindDuel
                         // TODO: Read card info via CardData extraction
                     }
                 }
+
+                // Field navigation hotkeys
+                bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                DuelFieldNav.HandleInput(shift);
+            }
+
+            // P key: read crafting points balance
+            if (Input.GetKeyDown(KeyCode.P))
+            {
+                try
+                {
+                    var cp = Il2CppYgomGame.Card.CardCollectionInfo.m_cardCraft;
+                    if (cp != null && cp.Count >= 4)
+                    {
+                        Speech.SayImmediate(
+                            $"Normal: {cp[0]}, Rare: {cp[1]}, Super Rare: {cp[2]}, Ultra Rare: {cp[3]}");
+                    }
+                    else
+                        Speech.SayImmediate("Crafting points unavailable");
+                }
+                catch { Speech.SayImmediate("Crafting points unavailable"); }
             }
 
             // Duel log selection tracking

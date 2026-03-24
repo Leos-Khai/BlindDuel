@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Il2CppYgomSystem;
+using Il2CppYgomSystem.UI;
 using HarmonyLib;
 
 namespace BlindDuel
@@ -31,6 +32,8 @@ namespace BlindDuel
 
             // Suppress Up/Down when Ctrl is held during a duel (mod handles those)
             if (IsCtrlDuelSuppress(Type)) return;
+            // Escape → Option2 (touchpad) only during duels
+            if (InputMap.IsDuelOnlySuppress(Type)) return;
 
             __result = Input.GetKeyDown(keyCode);
         }
@@ -57,6 +60,7 @@ namespace BlindDuel
             if (!map.TryGetValue(Type, out var keyCode)) return;
 
             if (IsCtrlDuelSuppress(Type)) return;
+            if (InputMap.IsDuelOnlySuppress(Type)) return;
 
             __result = Input.GetKey(keyCode);
         }
@@ -72,6 +76,12 @@ namespace BlindDuel
     {
         private static int _btnUp, _btnDown, _btnLeft, _btnRight, _btnDecision, _btnCancel;
         private static int _btnRUp, _btnRDown;
+        private static int _btnSub1, _btnSub2;
+        private static int _btnL2, _btnR2;
+        private static int _btnOption1;
+        private static int _btnOption2;
+        private static int _btnL3;
+
 
         public static Dictionary<int, KeyCode> Build()
         {
@@ -85,6 +95,13 @@ namespace BlindDuel
                 _btnCancel = GamePad.BUTTON_FUNC_CANCEL;
                 _btnRUp = GamePad.BUTTON_RUP;
                 _btnRDown = GamePad.BUTTON_RDOWN;
+                _btnSub1 = SelectorManager.GetGamePadKeyConfig(SelectorManager.KeyType.Sub1);
+                _btnSub2 = SelectorManager.GetGamePadKeyConfig(SelectorManager.KeyType.Sub2);
+                _btnL2 = GamePad.BUTTON_L2;
+                _btnR2 = GamePad.BUTTON_R2;
+                _btnOption1 = SelectorManager.GetGamePadKeyConfig(SelectorManager.KeyType.Option1);
+                _btnOption2 = SelectorManager.GetGamePadKeyConfig(SelectorManager.KeyType.Option2);
+                _btnL3 = GamePad.BUTTON_L3;
 
                 return new Dictionary<int, KeyCode>
                 {
@@ -94,6 +111,13 @@ namespace BlindDuel
                     { _btnRight, KeyCode.RightArrow },
                     { _btnDecision, KeyCode.Return },
                     { _btnCancel, KeyCode.Backspace },
+                    { _btnSub2, KeyCode.E },      // Y button
+                    { _btnSub1, KeyCode.F },       // X button
+                    { _btnL2, KeyCode.Z },         // Left trigger
+                    { _btnR2, KeyCode.X },         // Right trigger
+                    { _btnOption1, KeyCode.Tab },  // Start/Menu button
+                    { _btnOption2, KeyCode.Escape }, // Touchpad (duel settings/concede)
+                    { _btnL3, KeyCode.D },         // Left stick click
                 };
             }
             catch (Exception ex)
@@ -118,6 +142,18 @@ namespace BlindDuel
         {
             if (!NavigationState.IsInDuel) return false;
             return type == _btnRUp || type == _btnRDown;
+        }
+
+        /// <summary>
+        /// Suppress Escape → Option2 (touchpad) outside of duels.
+        /// Escape is already used by the game for other screens.
+        /// Suppress D → L3 (left stick click) during duels.
+        /// </summary>
+        public static bool IsDuelOnlySuppress(int type)
+        {
+            if (type == _btnOption2) return !NavigationState.IsInDuel;
+            if (type == _btnL3) return NavigationState.IsInDuel;
+            return false;
         }
 
     }

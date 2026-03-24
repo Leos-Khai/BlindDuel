@@ -73,6 +73,7 @@ namespace BlindDuel
             NavigationState.CurrentMenu = Menu.Duel;
             NavigationState.IsInDuel = true;
             DuelLogReader.Reset();
+            DuelFieldNav.Reset();
 
             // Log player identity for debugging online duel perspective
             try
@@ -133,6 +134,79 @@ namespace BlindDuel
             _handler = (Action<int, int, int>)OnFieldFocused;
             client.add_onFocusFieldHandler(_handler);
             Log.Write("[FieldFocus] Subscribed to onFocusFieldHandler");
+        }
+
+        /// <summary>
+        /// Programmatically move focus to a field position and announce it.
+        /// Uses DuelFieldBase.SelectItem to move the cursor through the game's
+        /// SelectionButton system, then announces via our focus handler.
+        /// </summary>
+        public static void FocusPosition(int player, int position, int viewIndex = 0)
+        {
+            // Find the zone's SelectionButton by GameObject name and call Select(false, true)
+            try
+            {
+                string anchorName = GetAnchorName(player, position, viewIndex);
+                if (anchorName == null) { goto fallback; }
+
+                var go = UnityEngine.GameObject.Find(anchorName);
+                if (go == null) { Log.Write($"[FieldNav] GO not found: {anchorName}"); goto fallback; }
+
+                var btn = go.GetComponent<Il2CppYgomSystem.UI.SelectionButton>();
+                if (btn == null) { Log.Write($"[FieldNav] No SelectionButton on {anchorName}"); goto fallback; }
+
+                // Deselect the currently focused item first
+                try
+                {
+                    var allButtons = UnityEngine.Object.FindObjectsOfType<Il2CppYgomSystem.UI.SelectionButton>();
+                    foreach (var b in allButtons)
+                    {
+                        try { if (b.isSelected) b.OnDeselected(); } catch { }
+                    }
+                }
+                catch { }
+
+                // Select the target (CallerCount 267)
+                var item = btn.TryCast<Il2CppYgomSystem.UI.SelectionItem>();
+                bool ok = item.Select(false, true);
+                Log.Write($"[FieldNav] {anchorName} Select={ok}");
+                if (ok) return; // game should fire onFocusFieldHandler
+            }
+            catch (Exception ex) { Log.Write($"[FieldNav] {ex.Message}"); }
+
+            fallback:
+            OnFieldFocused(player, position, viewIndex);
+        }
+
+        private static string GetAnchorName(int player, int position, int viewIndex)
+        {
+            string side = DuelState.IsMyPlayer(player) ? "Near" : "Far";
+
+            // Hand cards use different hierarchy
+            if (position == Engine.PosHand)
+                return $"{side}HandCard/HandCard{viewIndex}/HandCardButton{viewIndex}";
+
+            string zone = null;
+            if (position == Engine.PosMonsterLL) zone = "Monster0";
+            else if (position == Engine.PosMonsterL) zone = "Monster1";
+            else if (position == Engine.PosMonsterC) zone = "Monster2";
+            else if (position == Engine.PosMonsterR) zone = "Monster3";
+            else if (position == Engine.PosMonsterRR) zone = "Monster4";
+            else if (position == Engine.PosMagicLL) zone = "Magic0";
+            else if (position == Engine.PosMagicL) zone = "Magic1";
+            else if (position == Engine.PosMagicC) zone = "Magic2";
+            else if (position == Engine.PosMagicR) zone = "Magic3";
+            else if (position == Engine.PosMagicRR) zone = "Magic4";
+            else if (position == Engine.PosExLMonster) zone = "ExMonsterL";
+            else if (position == Engine.PosExRMonster) zone = "ExMonsterR";
+            else if (position == Engine.PosField) zone = "FieldMagic";
+            else if (position == Engine.PosGrave) zone = "Grave";
+            else if (position == Engine.PosExtra) zone = "Extra";
+            else if (position == Engine.PosDeck) zone = "MainDeck";
+            else if (position == Engine.PosExclude) zone = "Exclude";
+
+            if (zone == null) return null;
+            return $"Anchor_{side}_{zone}";
         }
 
         static void OnFieldFocused(int player, int position, int viewIndex)
@@ -224,7 +298,7 @@ namespace BlindDuel
 
                 // Opponent's face-down cards: game hides the card ID (mrk=0) but
                 // the card still exists. Use GetCardNum to detect it on field zones.
-                if (mrk <= 0 && !DuelState.IsMyPlayer(player) && (IsMonsterZone(position) || IsSpellTrapZone(position)))
+                if (mrk <= 0 && !DuelState.IsMyPlayer(player) && (IsMonsterZone(position) || IsSpellTrapZone(position) || position == Engine.PosHand))
                 {
                     try
                     {
