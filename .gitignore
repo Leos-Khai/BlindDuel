@@ -8,3 +8,4 @@ BlindDuel_debug.log
 libs/
 dump.cs.txt
 decompiled/
+.claude/settings.local.json
