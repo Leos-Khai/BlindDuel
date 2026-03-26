@@ -95,21 +95,29 @@ namespace BlindDuel
                 DuelFieldNav.HandleInput(shift);
             }
 
-            // P key: read crafting points balance
-            if (Input.GetKeyDown(KeyCode.P))
+            // P key: read crafting points (deck editor) or gems (shop)
+            if (Input.GetKeyDown(KeyCode.P) &&
+                (NavigationState.CurrentMenu == Menu.Deck || NavigationState.CurrentMenu == Menu.Shop))
             {
                 try
                 {
-                    var cp = Il2CppYgomGame.Card.CardCollectionInfo.m_cardCraft;
-                    if (cp != null && cp.Count >= 4)
+                    if (NavigationState.CurrentMenu == Menu.Shop)
                     {
-                        Speech.SayImmediate(
-                            $"Normal: {cp[0]}, Rare: {cp[1]}, Super Rare: {cp[2]}, Ultra Rare: {cp[3]}");
+                        int gems = Il2CppYgomGame.Utility.ItemUtil.GetHasTotalGem();
+                        Speech.SayImmediate($"Gems: {gems}");
                     }
                     else
-                        Speech.SayImmediate("Crafting points unavailable");
+                    {
+                        // CP balance per rarity: itemIDs 2=N, 3=R, 4=SR, 5=UR
+                        int cpN = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(2);
+                        int cpR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(3);
+                        int cpSR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(4);
+                        int cpUR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(5);
+                        Speech.SayImmediate(
+                            $"Normal: {cpN}, Rare: {cpR}, Super Rare: {cpSR}, Ultra Rare: {cpUR}");
+                    }
                 }
-                catch { Speech.SayImmediate("Crafting points unavailable"); }
+                catch { Speech.SayImmediate("Points unavailable"); }
             }
 
             // Duel log selection tracking
@@ -146,6 +154,15 @@ namespace BlindDuel
             string suffix = !string.IsNullOrEmpty(selIdx) ? $"\n{selIdx}" : null;
 
             CardReader.ReadAndSpeak(suffix: suffix, queued: useQueued);
+        }
+
+        /// <summary>
+        /// Invokable method for reading item preview popups (duel pass rewards, shop items).
+        /// Called via delayed Invoke() from the ItemPreviewViewController patch.
+        /// </summary>
+        public void ReadItemPreviewDelayed()
+        {
+            CardReader.ReadPreviewAndSpeak();
         }
 
         /// <summary>

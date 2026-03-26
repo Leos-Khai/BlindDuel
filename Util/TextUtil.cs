@@ -8,7 +8,7 @@ namespace BlindDuel
 {
     public static class TextUtil
     {
-        private static readonly HashSet<string> BannedTexts = new() { "00:00", "You can add new Cards to your Deck." };
+        private static readonly HashSet<string> BannedTexts = new() { "00:00", "You can add new Cards to your Deck.", "×n" };
 
         // Matches <card mrk = '12345'/> tags (self-closing, card name placeholder)
         private static readonly Regex CardTagPattern = new(@"<card\s+mrk\s*=\s*'(\d+)'\s*/>", RegexOptions.Compiled);
