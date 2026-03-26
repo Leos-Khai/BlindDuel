@@ -929,6 +929,12 @@ namespace BlindDuel
         /// </summary>
         private static int _prevActionCount;
 
+        /// <summary>
+        /// Tracks cards recently tributed/sent to GY as potential summon materials.
+        /// Consumed by AnnounceSummon when a fusion/synchro/xyz/link summon fires.
+        /// </summary>
+        private static readonly List<(string name, bool isOpponent)> _recentMaterials = new();
+
         public static void CapturePrevActionCount(DuelLogController instance)
         {
             try { _prevActionCount = instance.m_DataList_ShowAction?.Count ?? 0; }
@@ -970,25 +976,62 @@ namespace BlindDuel
                 var cardList = instance.m_DataList_ShowCardName;
                 if (cardList == null || cardList.Count <= prevCardNameCount) return;
 
+                // Collect materials (isCost entries) and the summoned card separately
+                var materials = new List<string>();
+                string summonedCard = null;
+                bool isOpponent = false;
+
                 for (int i = prevCardNameCount; i < cardList.Count; i++)
                 {
                     var card = cardList[i];
-                    if (card.isCost) continue;
-
                     int cardId = card.cardid;
+                    if (cardId <= 0) continue;
+
                     // Use datal.owner (player number) for accurate ownership
-                    bool isOpponent = actionOwner.HasValue
+                    isOpponent = actionOwner.HasValue
                         ? !DuelState.IsMyPlayer(actionOwner.Value)
                         : DuelState.IsOpponentTeam(card.team);
-                    string cardName = ResolveCardName(cardId);
+                    string name = ResolveCardName(cardId);
 
-                    Log.Write($"[DuelLog] {summonName}: {cardName} (owner={actionOwner}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
-
-                    DuelState.MessageJustAnnounced = true;
-                    string prefix = isOpponent ? "Opponent " : "";
-                    Speech.SayImmediate($"{prefix}{summonName}: {cardName}");
-                    return; // Only announce the first non-cost card
+                    if (card.isCost)
+                    {
+                        materials.Add(name);
+                    }
+                    else if (summonedCard == null)
+                    {
+                        // Query the Engine for where the card actually is NOW (destination)
+                        int myPlayer = DuelState.GetMyPlayerNum();
+                        int player = isOpponent ? (1 - myPlayer) : myPlayer;
+                        string zoneName = FindCardZone(player, cardId);
+                        string zoneStr = !string.IsNullOrEmpty(zoneName) ? $" to {zoneName}" : "";
+                        summonedCard = $"{name}{zoneStr}";
+                    }
                 }
+
+                if (summonedCard == null) return;
+
+                // If no materials from isCost, consume recently tracked materials
+                // (fusion/synchro/link materials are sent to GY via AddCardMoveLog
+                // before the summon log fires, so isCost misses them)
+                if (materials.Count == 0)
+                {
+                    for (int i = _recentMaterials.Count - 1; i >= 0; i--)
+                    {
+                        if (_recentMaterials[i].isOpponent == isOpponent)
+                            materials.Insert(0, _recentMaterials[i].name);
+                    }
+                }
+                _recentMaterials.Clear();
+
+                string prefix = isOpponent ? "Opponent " : "";
+                string materialsStr = materials.Count > 0
+                    ? $" using {string.Join(" and ", materials)}"
+                    : "";
+
+                string announcement = $"{prefix}{summonName}: {summonedCard}{materialsStr}";
+                Log.Write($"[DuelLog] {announcement}");
+                DuelState.MessageJustAnnounced = true;
+                Speech.SayImmediate(announcement);
             }
             catch (Exception ex) { Log.Write($"[DuelLogHelper] {ex.Message}"); }
         }
@@ -1028,11 +1071,15 @@ namespace BlindDuel
                         : DuelState.IsOpponentTeam(card.team);
                     string cardName = ResolveCardName(cardId);
 
-                    Log.Write($"[DuelLog] Activates: {cardName} (owner={actionOwner}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
+                    // Query the Engine for where the card actually is
+                    int player = isOpponent ? 1 : 0;
+                    string zoneName = FindCardZone(player, cardId);
+                    string zoneStr = !string.IsNullOrEmpty(zoneName) ? $" at {zoneName}" : "";
+                    Log.Write($"[DuelLog] Activates: {cardName}{zoneStr} (owner={actionOwner}, cardTeam={card.team}, opponent={isOpponent}, cardid={cardId})");
 
                     DuelState.MessageJustAnnounced = true;
                     string prefix = isOpponent ? "Opponent activates" : "Activate";
-                    Speech.SayImmediate($"{prefix}: {cardName}");
+                    Speech.SayImmediate($"{prefix}: {cardName}{zoneStr}");
                     return;
                 }
             }
@@ -1049,6 +1096,394 @@ namespace BlindDuel
             }
             catch { }
             return "unknown";
+        }
+
+        /// <summary>
+        /// Announce a battle attack from the duel log action data.
+        /// datal = attacker, datar = target.
+        /// </summary>
+        public static void AnnounceBattle(DuelLogController instance)
+        {
+            _recentMaterials.Clear();
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+
+                var actionList = instance.m_DataList_ShowAction;
+                if (actionList == null || _prevActionCount < 0
+                    || actionList.Count <= _prevActionCount) return;
+
+                var newAction = actionList[_prevActionCount];
+                bool isOpponent = DuelState.IsOpponentTeam(newAction.datac.team);
+                string who = isOpponent ? "Opponent's" : "Your";
+
+                // Attacker info (datal)
+                string attackerName = "unknown";
+                string attackerZone = null;
+                try
+                {
+                    var datal = newAction.datal;
+                    if (datal.isCardDataShow)
+                    {
+                        int attackerCardId = datal.cardid;
+                        if (attackerCardId > 0)
+                            attackerName = ResolveCardName(attackerCardId);
+                        attackerZone = GetPositionZoneName(datal.position);
+                    }
+                }
+                catch { }
+
+                // Target info (datar)
+                string targetName = null;
+                string targetZone = null;
+                bool isDirectAttack = false;
+                try
+                {
+                    var datar = newAction.datar;
+                    if (datar.isCardDataShow)
+                    {
+                        int targetCardId = datar.cardid;
+                        if (targetCardId > 0)
+                            targetName = ResolveCardName(targetCardId);
+                        else if (!datar.face)
+                            targetName = "face-down card";
+                        targetZone = GetPositionZoneName(datar.position);
+                    }
+                    else
+                    {
+                        isDirectAttack = true;
+                    }
+                }
+                catch { isDirectAttack = true; }
+
+                string announcement;
+                if (isDirectAttack)
+                {
+                    announcement = $"{who} {attackerName} attacks directly";
+                }
+                else if (targetName != null)
+                {
+                    string targetOwner = isOpponent ? "your" : "opponent's";
+                    string targetZoneStr = !string.IsNullOrEmpty(targetZone) ? $" at {targetZone}" : "";
+                    announcement = $"{who} {attackerName} attacks {targetOwner} {targetName}{targetZoneStr}";
+                }
+                else
+                {
+                    announcement = $"{who} {attackerName} attacks";
+                }
+
+                Log.Write($"[DuelLog] Battle: {announcement}");
+                DuelState.MessageJustAnnounced = true;
+                Speech.SayImmediate(announcement);
+            }
+            catch (Exception ex) { Log.Write($"[DuelLogHelper] Battle: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Announce effect targeting from AddCardLockonLog.
+        /// Tries ShowActionData (datal for targeted card, since lockon logs
+        /// the target on the left side), then falls back to ShowCardNameData.
+        /// </summary>
+        public static void AnnounceLockon(DuelLogController instance, int prevCardNameCount)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+
+                bool isOpponent = false;
+                string targetName = null;
+                string targetZone = null;
+
+                // Try action data first — check both sides for the target
+                try
+                {
+                    var actionList = instance.m_DataList_ShowAction;
+                    if (actionList != null && _prevActionCount >= 0
+                        && actionList.Count > _prevActionCount)
+                    {
+                        var newAction = actionList[_prevActionCount];
+                        isOpponent = DuelState.IsOpponentTeam(newAction.datac.team);
+
+                        // Try datal (the targeted card in lockon entries)
+                        var datal = newAction.datal;
+                        if (datal.isCardDataShow)
+                        {
+                            int cardId = datal.cardid;
+                            if (cardId > 0)
+                                targetName = ResolveCardName(cardId);
+                            else if (!datal.face)
+                                targetName = "face-down card";
+                            targetZone = GetPositionZoneName(datal.position);
+                        }
+
+                        // Also try datar if datal didn't have the target
+                        if (targetName == null)
+                        {
+                            var datar = newAction.datar;
+                            if (datar.isCardDataShow)
+                            {
+                                int cardId = datar.cardid;
+                                if (cardId > 0)
+                                    targetName = ResolveCardName(cardId);
+                                else if (!datar.face)
+                                    targetName = "face-down card";
+                                targetZone = GetPositionZoneName(datar.position);
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                // Fallback: read from ShowCardNameData entries
+                if (targetName == null && prevCardNameCount >= 0)
+                {
+                    try
+                    {
+                        var cardList = instance.m_DataList_ShowCardName;
+                        if (cardList != null && cardList.Count > prevCardNameCount)
+                        {
+                            var card = cardList[prevCardNameCount];
+                            isOpponent = DuelState.IsOpponentTeam(card.team);
+                            if (card.cardid > 0)
+                                targetName = ResolveCardName(card.cardid);
+                        }
+                    }
+                    catch { }
+                }
+
+                if (targetName == null && targetZone == null) return;
+
+                // Skip non-field positions — drawing/searching effects trigger
+                // lockon on Hand/Deck cards, producing misleading targeting messages.
+                if (targetZone is "Hand" or "Deck" or "Extra Deck"
+                    or "Graveyard" or "Banished")
+                    return;
+
+                string targetStr = targetName ?? "card";
+                string zoneStr = !string.IsNullOrEmpty(targetZone) ? $" at {targetZone}" : "";
+                string who = isOpponent ? "Opponent targets" : "Targeting";
+                string announcement = $"{who} {targetStr}{zoneStr}";
+
+                Log.Write($"[DuelLog] Lockon: {announcement}");
+                DuelState.MessageJustAnnounced = true;
+                Speech.SayQueued(announcement);
+            }
+            catch (Exception ex) { Log.Write($"[DuelLogHelper] Lockon: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Announce a generic card action (move, destroy, banish, etc.) from
+        /// AddCardMoveLog, AddCardBreakLog, AddCardExplosionLog, AddCardFlipTurnLog.
+        /// Reads the ShowActionData entry for card info and action type.
+        /// </summary>
+        public static void AnnounceCardAction(DuelLogController instance, string defaultVerb)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+
+                var actionList = instance.m_DataList_ShowAction;
+                if (actionList == null || _prevActionCount < 0
+                    || actionList.Count <= _prevActionCount) return;
+
+                var newAction = actionList[_prevActionCount];
+                bool isOpponent = DuelState.IsOpponentTeam(newAction.datac.team);
+
+                // Try to get a specific verb from the action type
+                string verb = defaultVerb;
+                try
+                {
+                    var acttype = newAction.datac.acttype;
+                    string mapped = GetCardActionLabel(acttype);
+                    if (mapped != null) verb = mapped;
+                }
+                catch { }
+
+                // Get card info from datal
+                string cardName = null;
+                string zoneName = null;
+                try
+                {
+                    var datal = newAction.datal;
+                    if (datal.isCardDataShow)
+                    {
+                        int cardId = datal.cardid;
+                        if (cardId > 0)
+                            cardName = ResolveCardName(cardId);
+                        else if (!datal.face)
+                            cardName = "face-down card";
+                        zoneName = GetPositionZoneName(datal.position);
+                    }
+                }
+                catch { }
+
+                if (cardName == null) return;
+
+                string who = isOpponent ? "Opponent's " : "";
+                string where = !string.IsNullOrEmpty(zoneName) ? $" ({zoneName})" : "";
+                string announcement = $"{who}{cardName} {verb}{where}";
+
+                Log.Write($"[DuelLog] CardAction: {announcement}");
+                DuelState.MessageJustAnnounced = true;
+                Speech.SayQueued(announcement);
+
+                // Track as potential summon material (tributed/sent to GY before a summon)
+                try
+                {
+                    var acttype = newAction.datac.acttype;
+                    if (cardName != "face-down card"
+                        && (acttype == LOGACTIONTYPE.ACTION_RELEASE
+                            || acttype == LOGACTIONTYPE.ACTION_SENDTOGRAVE))
+                    {
+                        _recentMaterials.Add((cardName, isOpponent));
+                        if (_recentMaterials.Count > 10) _recentMaterials.RemoveAt(0);
+                    }
+                }
+                catch { }
+            }
+            catch (Exception ex) { Log.Write($"[DuelLogHelper] CardAction: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Map LOGACTIONTYPE to a human-readable action label for card movements.
+        /// </summary>
+        static string GetCardActionLabel(LOGACTIONTYPE type) => type switch
+        {
+            LOGACTIONTYPE.ACTION_SENDTOGRAVE => "sent to Graveyard",
+            LOGACTIONTYPE.ACTION_EXCLUDE => "banished",
+            LOGACTIONTYPE.ACTION_BREAK => "destroyed",
+            LOGACTIONTYPE.ACTION_EXPLOSION => "destroyed by effect",
+            LOGACTIONTYPE.ACTION_RELEASE => "tributed",
+            LOGACTIONTYPE.ACTION_RETURN => "returned",
+            LOGACTIONTYPE.ACTION_MOVE => "moved",
+            LOGACTIONTYPE.ACTION_SEARCH => "searched",
+            LOGACTIONTYPE.ACTION_ADDCARD => "added to hand",
+            LOGACTIONTYPE.ACTION_DROP => "discarded",
+            _ => null
+        };
+
+        /// <summary>
+        /// Query the Engine to find which field zone a card is currently in.
+        /// Scans all monster and spell/trap zones for the given player.
+        /// Returns null if the card isn't found on the field.
+        /// </summary>
+        public static string FindCardZone(int player, int cardId)
+        {
+            if (cardId <= 0) return null;
+            try
+            {
+                // Monster zones
+                int[] monsterPos = { Engine.PosMonsterLL, Engine.PosMonsterL, Engine.PosMonsterC,
+                                     Engine.PosMonsterR, Engine.PosMonsterRR,
+                                     Engine.PosExLMonster, Engine.PosExRMonster };
+                for (int i = 0; i < monsterPos.Length; i++)
+                {
+                    if (Engine.GetCardNum(player, monsterPos[i]) > 0
+                        && Engine.GetCardID(player, monsterPos[i], 0) == cardId)
+                        return GetPositionZoneName(monsterPos[i]);
+                }
+
+                // Spell/Trap zones
+                int[] spellPos = { Engine.PosMagicLL, Engine.PosMagicL, Engine.PosMagicC,
+                                   Engine.PosMagicR, Engine.PosMagicRR,
+                                   Engine.PosField, Engine.PosPendulumLeft, Engine.PosPendulumRight };
+                for (int i = 0; i < spellPos.Length; i++)
+                {
+                    if (Engine.GetCardNum(player, spellPos[i]) > 0
+                        && Engine.GetCardID(player, spellPos[i], 0) == cardId)
+                        return GetPositionZoneName(spellPos[i]);
+                }
+            }
+            catch (Exception ex) { Log.Write($"[DuelLogHelper] FindCardZone: {ex.Message}"); }
+            return null;
+        }
+
+        /// <summary>
+        /// Announce a card being set face-down from AddCardSetLog.
+        /// </summary>
+        public static void AnnounceSet(DuelLogController instance)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+
+                var actionList = instance.m_DataList_ShowAction;
+                if (actionList == null || _prevActionCount < 0
+                    || actionList.Count <= _prevActionCount) return;
+
+                var newAction = actionList[_prevActionCount];
+                bool isOpponent = DuelState.IsOpponentTeam(newAction.datac.team);
+
+                // Try to get card info and position from datal
+                int cardId = 0;
+                string zoneName = null;
+                string cardName = null;
+                try
+                {
+                    var datal = newAction.datal;
+                    if (datal.isCardDataShow)
+                    {
+                        cardId = datal.cardid;
+                        // Read zone directly from the action data — more reliable
+                        // than scanning the field, especially for opponent face-downs
+                        // where Engine.GetCardID won't reveal the card.
+                        zoneName = GetPositionZoneName(datal.position);
+                    }
+                }
+                catch { }
+
+                // Fallback: scan the field for our own sets if position wasn't in action data
+                if (zoneName == null && cardId > 0)
+                {
+                    int myPlayer = DuelState.GetMyPlayerNum();
+                    int player = isOpponent ? (1 - myPlayer) : myPlayer;
+                    zoneName = FindCardZone(player, cardId);
+                }
+
+                // Only reveal card name for our own sets
+                if (cardId > 0 && !isOpponent)
+                    cardName = ResolveCardName(cardId);
+
+                string who = isOpponent ? "Opponent sets" : "Set";
+                string what = cardName != null ? $" {cardName}" : " a card";
+                string where = !string.IsNullOrEmpty(zoneName) ? $" at {zoneName}" : "";
+                string announcement = $"{who}{what}{where}";
+
+                Log.Write($"[DuelLog] Set: {announcement} (cardid={cardId})");
+                DuelState.MessageJustAnnounced = true;
+                Speech.SayImmediate(announcement);
+            }
+            catch (Exception ex) { Log.Write($"[DuelLogHelper] Set: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Convert a LogDataSide position value to a zone name.
+        /// Uses the same Engine.Pos* constants as FieldFocusHandler.GetZoneName
+        /// but without player-relative "Opponent's" prefix (caller handles that).
+        /// </summary>
+        public static string GetPositionZoneName(int position)
+        {
+            if (position == Engine.PosMonsterLL) return "Monster Zone 1";
+            if (position == Engine.PosMonsterL) return "Monster Zone 2";
+            if (position == Engine.PosMonsterC) return "Monster Zone 3";
+            if (position == Engine.PosMonsterR) return "Monster Zone 4";
+            if (position == Engine.PosMonsterRR) return "Monster Zone 5";
+            if (position == Engine.PosMagicLL) return "Spell Trap Zone 1";
+            if (position == Engine.PosMagicL) return "Spell Trap Zone 2";
+            if (position == Engine.PosMagicC) return "Spell Trap Zone 3";
+            if (position == Engine.PosMagicR) return "Spell Trap Zone 4";
+            if (position == Engine.PosMagicRR) return "Spell Trap Zone 5";
+            if (position == Engine.PosField) return "Field Spell Zone";
+            if (position == Engine.PosPendulumLeft) return "Left Pendulum Zone";
+            if (position == Engine.PosPendulumRight) return "Right Pendulum Zone";
+            if (position == Engine.PosExLMonster) return "Extra Monster Zone Left";
+            if (position == Engine.PosExRMonster) return "Extra Monster Zone Right";
+            if (position == Engine.PosHand) return "Hand";
+            if (position == Engine.PosExtra) return "Extra Deck";
+            if (position == Engine.PosDeck) return "Deck";
+            if (position == Engine.PosGrave) return "Graveyard";
+            if (position == Engine.PosExclude) return "Banished";
+            return null;
         }
 
         /// <summary>
@@ -1147,6 +1582,147 @@ namespace BlindDuel
         }
     }
 
+    /// <summary>
+    /// Announces battle attack declarations: "Your/Opponent's X attacks Y at Zone".
+    /// Reads attacker (datal) and target (datar) from the ShowActionData entry.
+    /// Direct attacks have no valid datar card data.
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddBattleAttackLog))]
+    class PatchAddBattleAttackLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance)
+        {
+            DuelLogHelper.CapturePrevActionCount(__instance);
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance)
+        {
+            DuelLogHelper.AnnounceBattle(__instance);
+        }
+    }
+
+    /// <summary>
+    /// Announces cards being set face-down: "Opponent sets a card at Spell Trap Zone 3".
+    /// For your own sets, the card name is included.
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddCardSetLog))]
+    class PatchAddCardSetLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance)
+        {
+            DuelLogHelper.CapturePrevActionCount(__instance);
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance)
+        {
+            DuelLogHelper.AnnounceSet(__instance);
+        }
+    }
+
+    /// <summary>
+    /// Announces effect targeting: "Targeting [card] at [zone]" or
+    /// "Opponent targets [card] at [zone]". Fires when a card becomes
+    /// the target of an effect (e.g. MST targeting a set spell/trap).
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddCardLockonLog))]
+    class PatchAddCardLockonLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance, ref int __state)
+        {
+            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
+            catch { __state = -1; }
+            DuelLogHelper.CapturePrevActionCount(__instance);
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance, int __state)
+        {
+            DuelLogHelper.AnnounceLockon(__instance, __state);
+        }
+    }
+
+    /// <summary>
+    /// Announces card movements: sent to GY, banished, returned to hand/deck, etc.
+    /// The acttype in the ShowActionData tells us the specific movement type.
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddCardMoveLog))]
+    class PatchAddCardMoveLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance)
+        {
+            DuelLogHelper.CapturePrevActionCount(__instance);
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance)
+        {
+            DuelLogHelper.AnnounceCardAction(__instance, "moved");
+        }
+    }
+
+    /// <summary>
+    /// Announces cards destroyed by battle.
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddCardBreakLog))]
+    class PatchAddCardBreakLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance)
+        {
+            DuelLogHelper.CapturePrevActionCount(__instance);
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance)
+        {
+            DuelLogHelper.AnnounceCardAction(__instance, "destroyed");
+        }
+    }
+
+    /// <summary>
+    /// Announces cards destroyed by card effect.
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddCardExplosionLog))]
+    class PatchAddCardExplosionLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance)
+        {
+            DuelLogHelper.CapturePrevActionCount(__instance);
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance)
+        {
+            DuelLogHelper.AnnounceCardAction(__instance, "destroyed by effect");
+        }
+    }
+
+    /// <summary>
+    /// Announces battle position changes (flip, ATK/DEF change).
+    /// </summary>
+    [HarmonyPatch(typeof(DuelLogController), nameof(DuelLogController.AddCardFlipTurnLog))]
+    class PatchAddCardFlipTurnLog
+    {
+        [HarmonyPrefix]
+        static void Prefix(DuelLogController __instance)
+        {
+            DuelLogHelper.CapturePrevActionCount(__instance);
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(DuelLogController __instance)
+        {
+            DuelLogHelper.AnnounceCardAction(__instance, "changed position");
+        }
+    }
+
     [HarmonyPatch(typeof(DuelInfoDialogBase), nameof(DuelInfoDialogBase.Open))]
     class PatchDuelInfoDialogOpen
     {
@@ -1187,8 +1763,16 @@ namespace BlindDuel
             var methods = new List<MethodBase>();
             foreach (var m in typeof(DuelConfirmDialog).GetMethods())
             {
-                if (m.Name == nameof(DuelConfirmDialog.Open))
-                    methods.Add(m);
+                if (m.Name != nameof(DuelConfirmDialog.Open)) continue;
+                // Only patch overloads that have a 'message' string parameter —
+                // Open(Action openedCallback) has no message and crashes the patch.
+                bool hasMessage = false;
+                foreach (var p in m.GetParameters())
+                {
+                    if (p.Name == "message" && p.ParameterType == typeof(string))
+                    { hasMessage = true; break; }
+                }
+                if (hasMessage) methods.Add(m);
             }
             return methods;
         }
