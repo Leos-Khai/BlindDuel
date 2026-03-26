@@ -20,12 +20,24 @@ namespace BlindDuel
             if (viewControllerName == "CardPackOpenResult")
                 Speech.AnnounceScreen("Pack Results");
             else
+            {
+                PackFlipTracker.Reset();
                 Speech.AnnounceScreen("Pack Opening");
+            }
             return true;
         }
 
         public string OnButtonFocused(SelectionButton button)
         {
+            // Suppress "Related Cards" button
+            try
+            {
+                string btnText = TextExtractor.ExtractFirst(button.gameObject);
+                if (btnText != null && btnText.Contains("Related"))
+                    return "";
+            }
+            catch { }
+
             try
             {
                 // Find the CardPackCardActor for this button
@@ -33,11 +45,11 @@ namespace BlindDuel
                 if (actor != null)
                 {
                     int mrk = actor._mrk_k__BackingField;
-                    bool isFaceUp = IsFaceUp(actor);
+                    bool isFaceUp = PackFlipTracker.IsFlipped(mrk);
 
                     if (isFaceUp && mrk > 0)
                     {
-                        // Card is revealed - speak full name + rarity
+                        // Card is revealed - speak full name + rarity + new status
                         var card = CardReader.ReadCardFromData(mrk);
                         string name = card?.Name;
                         if (string.IsNullOrEmpty(name)) return null;
@@ -57,28 +69,12 @@ namespace BlindDuel
                     }
                     else
                     {
-                        // Card is face-down - speak rarity from back glow
-                        string rarity = "Unknown";
-                        try
-                        {
-                            // Try to get rarity from DrawCardData.backSideRarity
-                            // or from the card database if mrk is available
-                            if (mrk > 0)
-                            {
-                                string rarityText = CardCollectionInfo.GetCardRarityText(
-                                    (int)CardCollectionInfo.GetCardRarity(mrk));
-                                if (!string.IsNullOrEmpty(rarityText))
-                                    rarity = rarityText;
-                            }
-                        }
-                        catch { }
-
-                        return $"Face-down card, {rarity}";
+                        return "Face-down card";
                     }
                 }
 
-                // Result screen: try CardWidget
-                int resultMrk = FindResultMrk(button);
+                // Result screen
+                int resultMrk = FindResultMrk(button, out bool resultIsNew);
                 if (resultMrk > 0)
                 {
                     var card = CardReader.ReadCardFromData(resultMrk);
@@ -94,6 +90,8 @@ namespace BlindDuel
                                 result += $", {rarityText}";
                         }
                         catch { }
+
+                        result += resultIsNew ? ", New" : ", Owned";
                         return result;
                     }
                 }
@@ -119,41 +117,39 @@ namespace BlindDuel
             return null;
         }
 
-        /// <summary>
-        /// Check if the card has been flipped face-up by checking
-        /// if the front renderer's GameObject is active.
-        /// </summary>
-        private static bool IsFaceUp(CardPackCardActor actor)
+        private static int FindResultMrk(SelectionButton button, out bool isNew)
         {
+            isNew = false;
+
+            // Result screen hierarchy:
+            //   PackCardTemplate(Clone) [parent]
+            //     CardPict [button] - has BindingCardMaterial with m_CardId
+            //     NewIcon - active if card is new
+            //     IconRarity
+            //     NumTextArea
             try
             {
-                var frontRenderer = actor.m_FrontRenderer;
-                if (frontRenderer != null)
-                    return frontRenderer.gameObject.activeInHierarchy;
+                // Get card ID from BindingCardMaterial on the button itself
+                var binding = button.GetComponent<Il2CppYgomGame.Menu.Common.BindingCardMaterial>();
+                if (binding != null)
+                {
+                    int mrk = binding.m_CardId;
+                    if (mrk > 0)
+                    {
+                        // NewIcon is a sibling under the same parent (PackCardTemplate)
+                        var parent = button.transform.parent;
+                        if (parent != null)
+                        {
+                            var newIcon = parent.Find("NewIcon");
+                            if (newIcon != null)
+                                isNew = newIcon.gameObject.activeInHierarchy;
+                        }
+                        return mrk;
+                    }
+                }
             }
-            catch { }
-            return false;
-        }
+            catch (Exception ex) { Log.Write($"[CardPackResult] {ex.Message}"); }
 
-        private static int FindResultMrk(SelectionButton button)
-        {
-            var transform = button.transform;
-            for (int i = 0; i < 5 && transform != null; i++)
-            {
-                try
-                {
-                    var widget = transform.GetComponent<Il2CppYgomGame.CardPack.CardWidget>();
-                    if (widget != null) return widget.m_Mrk;
-                }
-                catch { }
-                try
-                {
-                    var resultWidget = transform.GetComponent<Il2CppYgomGame.CardPack.OpenResult.CardWidget>();
-                    if (resultWidget != null) return resultWidget.mrk;
-                }
-                catch { }
-                transform = transform.parent;
-            }
             return 0;
         }
     }
