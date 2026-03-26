@@ -16,6 +16,10 @@ namespace BlindDuel
             string header = ScreenDetector.ReadGameHeaderText();
             if (!string.IsNullOrEmpty(header))
             {
+                // Suppress "Related Cards" text from pack opening card detail view
+                if (header.Contains("Related") || header.Contains("related"))
+                    return true;
+
                 Speech.AnnounceScreen(header);
                 return true;
             }
@@ -24,6 +28,13 @@ namespace BlindDuel
 
         public string OnButtonFocused(SelectionButton button)
         {
+            // Suppress "Related Cards" button from card detail view
+            if (button.name.Contains("Related") || button.name.Contains("related"))
+                return "";
+            string btnText = TextExtractor.ExtractFirst(button.gameObject);
+            if (btnText != null && btnText.Contains("Related"))
+                return "";
+
             try
             {
                 var focusVC = ScreenDetector.GetFocusVC();

@@ -2234,7 +2234,7 @@ namespace BlindDuel
                 if (string.IsNullOrEmpty(phaseName)) return;
 
                 Log.Write($"[PhaseChange] {phaseName}");
-                Speech.SayImmediate(phaseName);
+                Speech.SayQueued(phaseName);
             }
             catch (Exception ex) { Log.Write($"[PatchPhaseChange] {ex.Message}"); }
         }

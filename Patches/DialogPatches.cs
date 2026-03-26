@@ -22,6 +22,25 @@ namespace BlindDuel
         static void Postfix(CommonDialogViewController __instance) => DialogDetector.AnnounceDialog(__instance);
     }
 
+    /// <summary>
+    /// Announces item preview popup (duel pass rewards, shop items, etc.)
+    /// Uses a delayed read to let the UI populate before extracting text.
+    /// </summary>
+    [HarmonyPatch(typeof(ItemPreviewViewController), "OnCreatedView")]
+    class PatchItemPreviewCreated
+    {
+        [HarmonyPostfix]
+        static void Postfix()
+        {
+            try
+            {
+                BlindDuelCore.Instance?.CancelInvoke(nameof(BlindDuelCore.ReadItemPreviewDelayed));
+                BlindDuelCore.Instance?.Invoke(nameof(BlindDuelCore.ReadItemPreviewDelayed), 0.3f);
+            }
+            catch (Exception ex) { Log.Write($"[ItemPreview] {ex.Message}"); }
+        }
+    }
+
     [HarmonyPatch(typeof(TitleDataLinkDialogViewController), "OnCreatedView")]
     class PatchTitleDataLinkDialogCreated
     {
