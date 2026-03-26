@@ -161,16 +161,16 @@ namespace BlindDuel
         public static bool IsMyPlayer(int player) => player == GetMyPlayerNum();
 
         /// <summary>
-        /// True when ShowCardNameData.team refers to the opponent.
-        /// The team field is player-0-relative: team=true means player 0's card.
-        /// When we're player 1, that mapping is inverted.
+        /// True when a team boolean refers to the opponent.
+        /// team=false → Team0 (player 0), team=true → Team1 (player 1).
+        /// Verified from LogShowActionForAnalysis which uses m_Color_Team0/Team1.
         /// </summary>
         public static bool IsOpponentTeam(bool team)
         {
             int myPlayer = GetMyPlayerNum();
-            // team=true → player 0's card. If I'm player 0, that's mine (not opponent).
-            // team=true → player 0's card. If I'm player 1, that's opponent.
-            return team ? (myPlayer != 0) : (myPlayer == 0);
+            // team=false → player 0's card, team=true → player 1's card.
+            int cardPlayer = team ? 1 : 0;
+            return cardPlayer != myPlayer;
         }
     }
 }

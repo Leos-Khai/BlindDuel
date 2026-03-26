@@ -941,6 +941,17 @@ namespace BlindDuel
             catch { _prevActionCount = -1; }
         }
 
+        /// <summary>
+        /// Determines if an action belongs to the opponent.
+        /// Prefers datal.owner (actual player number) over datac.team.
+        /// </summary>
+        static bool ResolveIsOpponent(int datalOwner, bool datacTeam, bool ownerValid)
+        {
+            if (ownerValid)
+                return !DuelState.IsMyPlayer(datalOwner);
+            return DuelState.IsOpponentTeam(datacTeam);
+        }
+
         public static void AnnounceSummon(DuelLogController instance, int prevCardNameCount, string defaultLabel)
         {
             try
@@ -964,8 +975,7 @@ namespace BlindDuel
                         string specific = GetSummonTypeName(actType);
                         if (specific != null)
                             summonName = specific;
-                        // Use datal.owner (actual player number) instead of datac.team
-                        // (which reflects turn player, not card owner)
+                        // Use datal.owner (actual player number)
                         try { actionOwner = newAction.datal.owner; }
                         catch { }
                     }
@@ -987,7 +997,7 @@ namespace BlindDuel
                     int cardId = card.cardid;
                     if (cardId <= 0) continue;
 
-                    // Use datal.owner (player number) for accurate ownership
+                    // Use datal.owner (from action data) for accurate ownership
                     isOpponent = actionOwner.HasValue
                         ? !DuelState.IsMyPlayer(actionOwner.Value)
                         : DuelState.IsOpponentTeam(card.team);
@@ -1114,7 +1124,10 @@ namespace BlindDuel
                     || actionList.Count <= _prevActionCount) return;
 
                 var newAction = actionList[_prevActionCount];
-                bool isOpponent = DuelState.IsOpponentTeam(newAction.datac.team);
+                int _owner = -1; bool _ownerOk = false; bool _team = false;
+                try { _owner = newAction.datal.owner; _ownerOk = true; } catch { }
+                try { _team = newAction.datac.team; } catch { }
+                bool isOpponent = ResolveIsOpponent(_owner, _team, _ownerOk);
                 string who = isOpponent ? "Opponent's" : "Your";
 
                 // Attacker info (datal)
@@ -1202,7 +1215,8 @@ namespace BlindDuel
                         && actionList.Count > _prevActionCount)
                     {
                         var newAction = actionList[_prevActionCount];
-                        isOpponent = DuelState.IsOpponentTeam(newAction.datac.team);
+                        try { isOpponent = !DuelState.IsMyPlayer(newAction.datal.owner); }
+                        catch { try { isOpponent = DuelState.IsOpponentTeam(newAction.datac.team); } catch { } }
 
                         // Try datal (the targeted card in lockon entries)
                         var datal = newAction.datal;
@@ -1287,7 +1301,10 @@ namespace BlindDuel
                     || actionList.Count <= _prevActionCount) return;
 
                 var newAction = actionList[_prevActionCount];
-                bool isOpponent = DuelState.IsOpponentTeam(newAction.datac.team);
+                int _owner = -1; bool _ownerOk = false; bool _team = false;
+                try { _owner = newAction.datal.owner; _ownerOk = true; } catch { }
+                try { _team = newAction.datac.team; } catch { }
+                bool isOpponent = ResolveIsOpponent(_owner, _team, _ownerOk);
 
                 // Try to get a specific verb from the action type
                 string verb = defaultVerb;
@@ -1412,7 +1429,10 @@ namespace BlindDuel
                     || actionList.Count <= _prevActionCount) return;
 
                 var newAction = actionList[_prevActionCount];
-                bool isOpponent = DuelState.IsOpponentTeam(newAction.datac.team);
+                int _owner = -1; bool _ownerOk = false; bool _team = false;
+                try { _owner = newAction.datal.owner; _ownerOk = true; } catch { }
+                try { _team = newAction.datac.team; } catch { }
+                bool isOpponent = ResolveIsOpponent(_owner, _team, _ownerOk);
 
                 // Try to get card info and position from datal
                 int cardId = 0;
