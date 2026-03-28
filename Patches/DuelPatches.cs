@@ -74,6 +74,7 @@ namespace BlindDuel
             NavigationState.IsInDuel = true;
             DuelLogReader.Reset();
             DuelFieldNav.Reset();
+            DuelLogHelper.ResetRevealTracking();
 
             // Log player identity for debugging online duel perspective
             try
@@ -935,6 +936,13 @@ namespace BlindDuel
         /// </summary>
         private static readonly List<(string name, bool isOpponent)> _recentMaterials = new();
 
+        /// <summary>
+        /// High-water mark: the highest ShowCardName index "claimed" by a
+        /// summon, activation, lockon, or card-action announcement. Entries
+        /// above this index after a log method fires are potential reveals.
+        /// </summary>
+        private static int _cardNameHighWater = 0;
+
         public static void CapturePrevActionCount(DuelLogController instance)
         {
             try { _prevActionCount = instance.m_DataList_ShowAction?.Count ?? 0; }
@@ -984,7 +992,12 @@ namespace BlindDuel
 
                 // Find new ShowCardNameData entries added by this method
                 var cardList = instance.m_DataList_ShowCardName;
-                if (cardList == null || cardList.Count <= prevCardNameCount) return;
+                if (cardList == null || cardList.Count <= prevCardNameCount)
+                {
+                    if (cardList != null)
+                        _cardNameHighWater = Math.Max(_cardNameHighWater, cardList.Count);
+                    return;
+                }
 
                 // Collect materials (isCost entries) and the summoned card separately
                 var materials = new List<string>();
@@ -1042,6 +1055,8 @@ namespace BlindDuel
                 Log.Write($"[DuelLog] {announcement}");
                 DuelState.MessageJustAnnounced = true;
                 Speech.SayImmediate(announcement);
+
+                _cardNameHighWater = Math.Max(_cardNameHighWater, cardList.Count);
             }
             catch (Exception ex) { Log.Write($"[DuelLogHelper] {ex.Message}"); }
         }
@@ -1068,7 +1083,14 @@ namespace BlindDuel
                 catch { }
 
                 var cardList = instance.m_DataList_ShowCardName;
-                if (cardList == null || cardList.Count <= prevCardNameCount) return;
+                if (cardList == null || cardList.Count <= prevCardNameCount)
+                {
+                    if (cardList != null)
+                        _cardNameHighWater = Math.Max(_cardNameHighWater, cardList.Count);
+                    return;
+                }
+
+                _cardNameHighWater = Math.Max(_cardNameHighWater, cardList.Count);
 
                 for (int i = prevCardNameCount; i < cardList.Count; i++)
                 {
@@ -1265,12 +1287,23 @@ namespace BlindDuel
                     catch { }
                 }
 
+                // Advance reveal high-water mark so lockon entries
+                // (even skipped ones) don't trigger false reveal announcements
+                try
+                {
+                    var cnList = instance.m_DataList_ShowCardName;
+                    if (cnList != null)
+                        _cardNameHighWater = Math.Max(_cardNameHighWater, cnList.Count);
+                }
+                catch { }
+
                 if (targetName == null && targetZone == null) return;
 
-                // Skip non-field positions — drawing/searching effects trigger
-                // lockon on Hand/Deck cards, producing misleading targeting messages.
-                if (targetZone is "Hand" or "Deck" or "Extra Deck"
-                    or "Graveyard" or "Banished")
+                // Skip Hand/Deck/Extra — drawing/searching effects trigger
+                // lockon on those cards, producing misleading targeting messages.
+                // Graveyard and Banished are kept: targeting cards there is
+                // almost always a legitimate effect target.
+                if (targetZone is "Hand" or "Deck" or "Extra Deck")
                     return;
 
                 string targetStr = targetName ?? "card";
@@ -1290,7 +1323,8 @@ namespace BlindDuel
         /// AddCardMoveLog, AddCardBreakLog, AddCardExplosionLog, AddCardFlipTurnLog.
         /// Reads the ShowActionData entry for card info and action type.
         /// </summary>
-        public static void AnnounceCardAction(DuelLogController instance, string defaultVerb)
+        public static void AnnounceCardAction(DuelLogController instance, string defaultVerb,
+            int prevCardNameCount = -1)
         {
             try
             {
@@ -1334,6 +1368,32 @@ namespace BlindDuel
                 }
                 catch { }
 
+                // For search/add actions, try ShowCardName entries when
+                // action data doesn't have the card ID
+                if (prevCardNameCount >= 0
+                    && (verb == "searched" || verb == "added to hand")
+                    && (cardName == null || cardName == "face-down card"))
+                {
+                    try
+                    {
+                        var cardList = instance.m_DataList_ShowCardName;
+                        if (cardList != null && cardList.Count > prevCardNameCount)
+                        {
+                            for (int i = prevCardNameCount; i < cardList.Count; i++)
+                            {
+                                var card = cardList[i];
+                                if (card.cardid > 0)
+                                {
+                                    cardName = ResolveCardName(card.cardid);
+                                    break;
+                                }
+                            }
+                            _cardNameHighWater = Math.Max(_cardNameHighWater, cardList.Count);
+                        }
+                    }
+                    catch { }
+                }
+
                 if (cardName == null) return;
 
                 string who = isOpponent ? "Opponent's " : "";
@@ -1359,6 +1419,55 @@ namespace BlindDuel
                 catch { }
             }
             catch (Exception ex) { Log.Write($"[DuelLogHelper] CardAction: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Announce newly revealed cards that weren't claimed by other
+        /// announcements (summon, activation, lockon, card action).
+        /// Called after AddCardHappenLog and AddCardMoveLog postfixes.
+        /// </summary>
+        public static void AnnounceReveals(DuelLogController instance)
+        {
+            try
+            {
+                if (!NavigationState.IsInDuel) return;
+
+                var cardList = instance.m_DataList_ShowCardName;
+                if (cardList == null || cardList.Count <= _cardNameHighWater) return;
+
+                var reveals = new List<string>();
+                bool isOpponent = false;
+
+                for (int i = _cardNameHighWater; i < cardList.Count; i++)
+                {
+                    var card = cardList[i];
+                    if (card.isCost) continue;
+                    if (card.cardid <= 0) continue;
+
+                    isOpponent = DuelState.IsOpponentTeam(card.team);
+                    string name = ResolveCardName(card.cardid);
+                    if (name != null && name != "unknown")
+                        reveals.Add(name);
+                }
+
+                _cardNameHighWater = cardList.Count;
+
+                if (reveals.Count == 0) return;
+
+                string who = isOpponent ? "Opponent reveals" : "Revealed";
+                string cardNames = string.Join(", ", reveals);
+                string announcement = $"{who}: {cardNames}";
+
+                Log.Write($"[DuelLog] Reveal: {announcement}");
+                DuelState.MessageJustAnnounced = true;
+                Speech.SayQueued(announcement);
+            }
+            catch (Exception ex) { Log.Write($"[DuelLogHelper] Reveal: {ex.Message}"); }
+        }
+
+        public static void ResetRevealTracking()
+        {
+            _cardNameHighWater = 0;
         }
 
         /// <summary>
@@ -1599,6 +1708,7 @@ namespace BlindDuel
         static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceActivation(__instance, __state);
+            DuelLogHelper.AnnounceReveals(__instance);
         }
     }
 
@@ -1674,15 +1784,18 @@ namespace BlindDuel
     class PatchAddCardMoveLog
     {
         [HarmonyPrefix]
-        static void Prefix(DuelLogController __instance)
+        static void Prefix(DuelLogController __instance, ref int __state)
         {
+            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
+            catch { __state = -1; }
             DuelLogHelper.CapturePrevActionCount(__instance);
         }
 
         [HarmonyPostfix]
-        static void Postfix(DuelLogController __instance)
+        static void Postfix(DuelLogController __instance, int __state)
         {
-            DuelLogHelper.AnnounceCardAction(__instance, "moved");
+            DuelLogHelper.AnnounceCardAction(__instance, "moved", __state);
+            DuelLogHelper.AnnounceReveals(__instance);
         }
     }
 
