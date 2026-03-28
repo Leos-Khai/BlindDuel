@@ -931,12 +931,6 @@ namespace BlindDuel
         private static int _prevActionCount;
 
         /// <summary>
-        /// Tracks cards recently tributed/sent to GY as potential summon materials.
-        /// Consumed by AnnounceSummon when a fusion/synchro/xyz/link summon fires.
-        /// </summary>
-        private static readonly List<(string name, bool isOpponent)> _recentMaterials = new();
-
-        /// <summary>
         /// High-water mark: the highest ShowCardName index "claimed" by a
         /// summon, activation, lockon, or card-action announcement. Entries
         /// above this index after a log method fires are potential reveals.
@@ -958,6 +952,18 @@ namespace BlindDuel
             if (ownerValid)
                 return !DuelState.IsMyPlayer(datalOwner);
             return DuelState.IsOpponentTeam(datacTeam);
+        }
+
+        /// <summary>
+        /// Extracts owner/team from a ShowActionData entry and resolves whether
+        /// the action belongs to the opponent.
+        /// </summary>
+        static bool ResolveActionOwner(ShowActionData action)
+        {
+            int owner = -1; bool ownerOk = false; bool team = false;
+            try { owner = action.datal.owner; ownerOk = true; } catch { }
+            try { team = action.datac.team; } catch { }
+            return ResolveIsOpponent(owner, team, ownerOk);
         }
 
         public static void AnnounceSummon(DuelLogController instance, int prevCardNameCount, string defaultLabel)
@@ -999,8 +1005,8 @@ namespace BlindDuel
                     return;
                 }
 
-                // Collect materials (isCost entries) and the summoned card separately
-                var materials = new List<string>();
+                // Find the summoned card (skip isCost entries — those are materials
+                // already announced individually by AnnounceCardAction)
                 string summonedCard = null;
                 bool isOpponent = false;
 
@@ -1008,50 +1014,25 @@ namespace BlindDuel
                 {
                     var card = cardList[i];
                     int cardId = card.cardid;
-                    if (cardId <= 0) continue;
+                    if (cardId <= 0 || card.isCost) continue;
 
-                    // Use datal.owner (from action data) for accurate ownership
                     isOpponent = actionOwner.HasValue
                         ? !DuelState.IsMyPlayer(actionOwner.Value)
                         : DuelState.IsOpponentTeam(card.team);
-                    string name = ResolveCardName(cardId);
 
-                    if (card.isCost)
-                    {
-                        materials.Add(name);
-                    }
-                    else if (summonedCard == null)
-                    {
-                        // Query the Engine for where the card actually is NOW (destination)
-                        int myPlayer = DuelState.GetMyPlayerNum();
-                        int player = isOpponent ? (1 - myPlayer) : myPlayer;
-                        string zoneName = FindCardZone(player, cardId);
-                        string zoneStr = !string.IsNullOrEmpty(zoneName) ? $" to {zoneName}" : "";
-                        summonedCard = $"{name}{zoneStr}";
-                    }
+                    string name = ResolveCardName(cardId);
+                    int myPlayer = DuelState.GetMyPlayerNum();
+                    int player = isOpponent ? (1 - myPlayer) : myPlayer;
+                    string zoneName = FindCardZone(player, cardId);
+                    string zoneStr = !string.IsNullOrEmpty(zoneName) ? $" to {zoneName}" : "";
+                    summonedCard = $"{name}{zoneStr}";
+                    break;
                 }
 
                 if (summonedCard == null) return;
 
-                // If no materials from isCost, consume recently tracked materials
-                // (fusion/synchro/link materials are sent to GY via AddCardMoveLog
-                // before the summon log fires, so isCost misses them)
-                if (materials.Count == 0)
-                {
-                    for (int i = _recentMaterials.Count - 1; i >= 0; i--)
-                    {
-                        if (_recentMaterials[i].isOpponent == isOpponent)
-                            materials.Insert(0, _recentMaterials[i].name);
-                    }
-                }
-                _recentMaterials.Clear();
-
                 string prefix = isOpponent ? "Opponent " : "";
-                string materialsStr = materials.Count > 0
-                    ? $" using {string.Join(" and ", materials)}"
-                    : "";
-
-                string announcement = $"{prefix}{summonName}: {summonedCard}{materialsStr}";
+                string announcement = $"{prefix}{summonName}: {summonedCard}";
                 Log.Write($"[DuelLog] {announcement}");
                 DuelState.MessageJustAnnounced = true;
                 Speech.SayImmediate(announcement);
@@ -1136,7 +1117,6 @@ namespace BlindDuel
         /// </summary>
         public static void AnnounceBattle(DuelLogController instance)
         {
-            _recentMaterials.Clear();
             try
             {
                 if (!NavigationState.IsInDuel) return;
@@ -1146,10 +1126,7 @@ namespace BlindDuel
                     || actionList.Count <= _prevActionCount) return;
 
                 var newAction = actionList[_prevActionCount];
-                int _owner = -1; bool _ownerOk = false; bool _team = false;
-                try { _owner = newAction.datal.owner; _ownerOk = true; } catch { }
-                try { _team = newAction.datac.team; } catch { }
-                bool isOpponent = ResolveIsOpponent(_owner, _team, _ownerOk);
+                bool isOpponent = ResolveActionOwner(newAction);
                 string who = isOpponent ? "Opponent's" : "Your";
 
                 // Attacker info (datal)
@@ -1237,8 +1214,7 @@ namespace BlindDuel
                         && actionList.Count > _prevActionCount)
                     {
                         var newAction = actionList[_prevActionCount];
-                        try { isOpponent = !DuelState.IsMyPlayer(newAction.datal.owner); }
-                        catch { try { isOpponent = DuelState.IsOpponentTeam(newAction.datac.team); } catch { } }
+                        isOpponent = ResolveActionOwner(newAction);
 
                         // Try datal (the targeted card in lockon entries)
                         var datal = newAction.datal;
@@ -1335,10 +1311,7 @@ namespace BlindDuel
                     || actionList.Count <= _prevActionCount) return;
 
                 var newAction = actionList[_prevActionCount];
-                int _owner = -1; bool _ownerOk = false; bool _team = false;
-                try { _owner = newAction.datal.owner; _ownerOk = true; } catch { }
-                try { _team = newAction.datac.team; } catch { }
-                bool isOpponent = ResolveIsOpponent(_owner, _team, _ownerOk);
+                bool isOpponent = ResolveActionOwner(newAction);
 
                 // Try to get a specific verb from the action type
                 string verb = defaultVerb;
@@ -1404,19 +1377,6 @@ namespace BlindDuel
                 DuelState.MessageJustAnnounced = true;
                 Speech.SayQueued(announcement);
 
-                // Track as potential summon material (tributed/sent to GY before a summon)
-                try
-                {
-                    var acttype = newAction.datac.acttype;
-                    if (cardName != "face-down card"
-                        && (acttype == LOGACTIONTYPE.ACTION_RELEASE
-                            || acttype == LOGACTIONTYPE.ACTION_SENDTOGRAVE))
-                    {
-                        _recentMaterials.Add((cardName, isOpponent));
-                        if (_recentMaterials.Count > 10) _recentMaterials.RemoveAt(0);
-                    }
-                }
-                catch { }
             }
             catch (Exception ex) { Log.Write($"[DuelLogHelper] CardAction: {ex.Message}"); }
         }
@@ -1538,10 +1498,7 @@ namespace BlindDuel
                     || actionList.Count <= _prevActionCount) return;
 
                 var newAction = actionList[_prevActionCount];
-                int _owner = -1; bool _ownerOk = false; bool _team = false;
-                try { _owner = newAction.datal.owner; _ownerOk = true; } catch { }
-                try { _team = newAction.datac.team; } catch { }
-                bool isOpponent = ResolveIsOpponent(_owner, _team, _ownerOk);
+                bool isOpponent = ResolveActionOwner(newAction);
 
                 // Try to get card info and position from datal
                 int cardId = 0;
