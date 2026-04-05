@@ -944,6 +944,34 @@ namespace BlindDuel
         }
 
         /// <summary>
+        /// Combined prefix helper: captures both the ShowAction count and
+        /// ShowCardName count in one call. Returns prevCardNameCount.
+        /// </summary>
+        public static int CapturePreState(DuelLogController instance)
+        {
+            CapturePrevActionCount(instance);
+            try { return instance.m_DataList_ShowCardName?.Count ?? 0; }
+            catch { return -1; }
+        }
+
+        /// <summary>
+        /// Common postfix finalizer: ensures the high-water mark always
+        /// advances past any new ShowCardName entries, then announces
+        /// any unclaimed reveals. Call this AFTER the specific announce method.
+        /// </summary>
+        public static void FinalizeAnnouncement(DuelLogController instance)
+        {
+            try
+            {
+                var cnList = instance.m_DataList_ShowCardName;
+                if (cnList != null)
+                    _cardNameHighWater = Math.Max(_cardNameHighWater, cnList.Count);
+            }
+            catch { }
+            AnnounceReveals(instance);
+        }
+
+        /// <summary>
         /// Determines if an action belongs to the opponent.
         /// Prefers datal.owner (actual player number) over datac.team.
         /// </summary>
@@ -1187,6 +1215,14 @@ namespace BlindDuel
                 Log.Write($"[DuelLog] Battle: {announcement}");
                 DuelState.MessageJustAnnounced = true;
                 Speech.SayImmediate(announcement);
+
+                try
+                {
+                    var cnList = instance.m_DataList_ShowCardName;
+                    if (cnList != null)
+                        _cardNameHighWater = Math.Max(_cardNameHighWater, cnList.Count);
+                }
+                catch { }
             }
             catch (Exception ex) { Log.Write($"[DuelLogHelper] Battle: {ex.Message}"); }
         }
@@ -1297,7 +1333,7 @@ namespace BlindDuel
         /// <summary>
         /// Announce a generic card action (move, destroy, banish, etc.) from
         /// AddCardMoveLog, AddCardBreakLog, AddCardExplosionLog, AddCardFlipTurnLog.
-        /// Reads the ShowActionData entry for card info and action type.
+        /// Reads the ShowActionData entry for card info, action type, and zone travel.
         /// </summary>
         public static void AnnounceCardAction(DuelLogController instance, string defaultVerb,
             int prevCardNameCount = -1)
@@ -1315,17 +1351,18 @@ namespace BlindDuel
 
                 // Try to get a specific verb from the action type
                 string verb = defaultVerb;
+                LOGACTIONTYPE acttype = default;
                 try
                 {
-                    var acttype = newAction.datac.acttype;
+                    acttype = newAction.datac.acttype;
                     string mapped = GetCardActionLabel(acttype);
                     if (mapped != null) verb = mapped;
                 }
                 catch { }
 
-                // Get card info from datal
+                // Get card info and source zone from datal
                 string cardName = null;
-                string zoneName = null;
+                string sourceZone = null;
                 try
                 {
                     var datal = newAction.datal;
@@ -1336,7 +1373,26 @@ namespace BlindDuel
                             cardName = ResolveCardName(cardId);
                         else if (!datal.face)
                             cardName = "face-down card";
-                        zoneName = GetPositionZoneName(datal.position);
+                        sourceZone = GetPositionZoneName(datal.position);
+                    }
+                }
+                catch { }
+
+                // Get destination zone from datar (may not be populated)
+                string destZone = null;
+                try
+                {
+                    var datar = newAction.datar;
+                    if (datar.isCardDataShow)
+                    {
+                        destZone = GetPositionZoneName(datar.position);
+                        // If datal didn't have the card, try datar
+                        if (cardName == null)
+                        {
+                            int cardId = datar.cardid;
+                            if (cardId > 0)
+                                cardName = ResolveCardName(cardId);
+                        }
                     }
                 }
                 catch { }
@@ -1370,8 +1426,8 @@ namespace BlindDuel
                 if (cardName == null) return;
 
                 string who = isOpponent ? "Opponent's " : "";
-                string where = !string.IsNullOrEmpty(zoneName) ? $" ({zoneName})" : "";
-                string announcement = $"{who}{cardName} {verb}{where}";
+                string zoneInfo = BuildZoneInfo(sourceZone, destZone, acttype);
+                string announcement = $"{who}{cardName} {verb}{zoneInfo}";
 
                 Log.Write($"[DuelLog] CardAction: {announcement}");
                 DuelState.MessageJustAnnounced = true;
@@ -1379,6 +1435,46 @@ namespace BlindDuel
 
             }
             catch (Exception ex) { Log.Write($"[DuelLogHelper] CardAction: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Build zone travel info string based on action type.
+        /// Destruction/banish/tribute: "from {source}" (destination implicit in verb).
+        /// Movement/search/add/return: "from {source}" or "from {source} to {dest}".
+        /// Discard: no zone info (source is always Hand).
+        /// </summary>
+        static string BuildZoneInfo(string sourceZone, string destZone, LOGACTIONTYPE acttype)
+        {
+            bool hasSource = !string.IsNullOrEmpty(sourceZone);
+            bool hasDest = !string.IsNullOrEmpty(destZone);
+
+            // Discard: source is always Hand, no need to state it
+            if (acttype == LOGACTIONTYPE.ACTION_DROP)
+                return "";
+
+            // Destruction/banish/tribute: destination is implicit in the verb
+            if (acttype is LOGACTIONTYPE.ACTION_BREAK or LOGACTIONTYPE.ACTION_EXPLOSION
+                or LOGACTIONTYPE.ACTION_RELEASE or LOGACTIONTYPE.ACTION_SENDTOGRAVE
+                or LOGACTIONTYPE.ACTION_EXCLUDE)
+            {
+                return hasSource ? $" from {sourceZone}" : "";
+            }
+
+            // Movement/search/add/return: show from→to when both available
+            if (acttype is LOGACTIONTYPE.ACTION_RETURN or LOGACTIONTYPE.ACTION_MOVE
+                or LOGACTIONTYPE.ACTION_SEARCH or LOGACTIONTYPE.ACTION_ADDCARD)
+            {
+                if (hasSource && hasDest && sourceZone != destZone)
+                    return $" from {sourceZone} to {destZone}";
+                if (hasSource)
+                    return $" from {sourceZone}";
+                if (hasDest)
+                    return $" to {destZone}";
+                return "";
+            }
+
+            // Fallback: show source if available
+            return hasSource ? $" from {sourceZone}" : "";
         }
 
         /// <summary>
@@ -1538,6 +1634,14 @@ namespace BlindDuel
                 Log.Write($"[DuelLog] Set: {announcement} (cardid={cardId})");
                 DuelState.MessageJustAnnounced = true;
                 Speech.SayImmediate(announcement);
+
+                try
+                {
+                    var cnList = instance.m_DataList_ShowCardName;
+                    if (cnList != null)
+                        _cardNameHighWater = Math.Max(_cardNameHighWater, cnList.Count);
+                }
+                catch { }
             }
             catch (Exception ex) { Log.Write($"[DuelLogHelper] Set: {ex.Message}"); }
         }
@@ -1597,15 +1701,14 @@ namespace BlindDuel
         [HarmonyPrefix]
         static void Prefix(DuelLogController __instance, ref int __state)
         {
-            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
-            catch { __state = -1; }
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
         static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceSummon(__instance, __state, "Summon");
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1615,15 +1718,14 @@ namespace BlindDuel
         [HarmonyPrefix]
         static void Prefix(DuelLogController __instance, ref int __state)
         {
-            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
-            catch { __state = -1; }
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
         static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceSummon(__instance, __state, "Special Summon");
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1633,15 +1735,14 @@ namespace BlindDuel
         [HarmonyPrefix]
         static void Prefix(DuelLogController __instance, ref int __state)
         {
-            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
-            catch { __state = -1; }
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
         static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceSummon(__instance, __state, "Fusion Summon");
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1656,16 +1757,14 @@ namespace BlindDuel
         [HarmonyPrefix]
         static void Prefix(DuelLogController __instance, ref int __state)
         {
-            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
-            catch { __state = -1; }
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
         static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceActivation(__instance, __state);
-            DuelLogHelper.AnnounceReveals(__instance);
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1678,15 +1777,16 @@ namespace BlindDuel
     class PatchAddBattleAttackLog
     {
         [HarmonyPrefix]
-        static void Prefix(DuelLogController __instance)
+        static void Prefix(DuelLogController __instance, ref int __state)
         {
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
-        static void Postfix(DuelLogController __instance)
+        static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceBattle(__instance);
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1698,15 +1798,16 @@ namespace BlindDuel
     class PatchAddCardSetLog
     {
         [HarmonyPrefix]
-        static void Prefix(DuelLogController __instance)
+        static void Prefix(DuelLogController __instance, ref int __state)
         {
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
-        static void Postfix(DuelLogController __instance)
+        static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceSet(__instance);
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1721,15 +1822,14 @@ namespace BlindDuel
         [HarmonyPrefix]
         static void Prefix(DuelLogController __instance, ref int __state)
         {
-            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
-            catch { __state = -1; }
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
         static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceLockon(__instance, __state);
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1743,16 +1843,14 @@ namespace BlindDuel
         [HarmonyPrefix]
         static void Prefix(DuelLogController __instance, ref int __state)
         {
-            try { __state = __instance.m_DataList_ShowCardName?.Count ?? 0; }
-            catch { __state = -1; }
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
         static void Postfix(DuelLogController __instance, int __state)
         {
             DuelLogHelper.AnnounceCardAction(__instance, "moved", __state);
-            DuelLogHelper.AnnounceReveals(__instance);
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1763,15 +1861,16 @@ namespace BlindDuel
     class PatchAddCardBreakLog
     {
         [HarmonyPrefix]
-        static void Prefix(DuelLogController __instance)
+        static void Prefix(DuelLogController __instance, ref int __state)
         {
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
-        static void Postfix(DuelLogController __instance)
+        static void Postfix(DuelLogController __instance, int __state)
         {
-            DuelLogHelper.AnnounceCardAction(__instance, "destroyed");
+            DuelLogHelper.AnnounceCardAction(__instance, "destroyed", __state);
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1782,15 +1881,16 @@ namespace BlindDuel
     class PatchAddCardExplosionLog
     {
         [HarmonyPrefix]
-        static void Prefix(DuelLogController __instance)
+        static void Prefix(DuelLogController __instance, ref int __state)
         {
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
-        static void Postfix(DuelLogController __instance)
+        static void Postfix(DuelLogController __instance, int __state)
         {
-            DuelLogHelper.AnnounceCardAction(__instance, "destroyed by effect");
+            DuelLogHelper.AnnounceCardAction(__instance, "destroyed by effect", __state);
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
@@ -1801,15 +1901,16 @@ namespace BlindDuel
     class PatchAddCardFlipTurnLog
     {
         [HarmonyPrefix]
-        static void Prefix(DuelLogController __instance)
+        static void Prefix(DuelLogController __instance, ref int __state)
         {
-            DuelLogHelper.CapturePrevActionCount(__instance);
+            __state = DuelLogHelper.CapturePreState(__instance);
         }
 
         [HarmonyPostfix]
-        static void Postfix(DuelLogController __instance)
+        static void Postfix(DuelLogController __instance, int __state)
         {
-            DuelLogHelper.AnnounceCardAction(__instance, "changed position");
+            DuelLogHelper.AnnounceCardAction(__instance, "changed position", __state);
+            DuelLogHelper.FinalizeAnnouncement(__instance);
         }
     }
 
