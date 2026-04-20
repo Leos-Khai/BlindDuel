@@ -108,11 +108,12 @@ namespace BlindDuel
                     }
                     else
                     {
-                        // CP balance per rarity: itemIDs 2=N, 3=R, 4=SR, 5=UR
-                        int cpN = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(2);
-                        int cpR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(3);
-                        int cpSR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(4);
-                        int cpUR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(5);
+                        // CP balance per rarity. IDs 1-2 are Free/Paid Gem, IDs 100000/200000
+                        // are Shine/Royal foils, so CP items start at 3: 3=N, 4=R, 5=SR, 6=UR.
+                        int cpN = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(3);
+                        int cpR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(4);
+                        int cpSR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(5);
+                        int cpUR = Il2CppYgomGame.Utility.ItemUtil.GetHasItemQuantity(6);
                         Speech.SayImmediate(
                             $"Normal: {cpN}, Rare: {cpR}, Super Rare: {cpSR}, Ultra Rare: {cpUR}");
                     }
@@ -139,6 +140,9 @@ namespace BlindDuel
             // Detection: screen/dialog changes
             DialogDetector.Poll();
             ScreenDetector.Poll();
+
+            // Settings slider / toggle value-change announcement
+            SettingsHandler.PollSettingValue();
         }
 
         /// <summary>

@@ -34,6 +34,9 @@ namespace BlindDuel
             if (IsCtrlDuelSuppress(Type)) return;
             // Escape → Option2 (touchpad) only during duels
             if (InputMap.IsDuelOnlySuppress(Type)) return;
+            // Don't fire Cancel (Backspace) while a text input field is active —
+            // the user is deleting characters, not cancelling the screen.
+            if (InputMap.IsInputEditingSuppress(Type)) return;
 
             __result = Input.GetKeyDown(keyCode);
         }
@@ -61,6 +64,7 @@ namespace BlindDuel
 
             if (IsCtrlDuelSuppress(Type)) return;
             if (InputMap.IsDuelOnlySuppress(Type)) return;
+            if (InputMap.IsInputEditingSuppress(Type)) return;
 
             __result = Input.GetKey(keyCode);
         }
@@ -161,5 +165,14 @@ namespace BlindDuel
             return false;
         }
 
+        /// <summary>
+        /// Suppress Backspace → Cancel while an input field is being edited
+        /// (backspace should delete characters, not close the screen).
+        /// </summary>
+        public static bool IsInputEditingSuppress(int type)
+        {
+            if (type != _btnCancel) return false;
+            return PatchInputFieldValueChanged.IsEditing;
+        }
     }
 }

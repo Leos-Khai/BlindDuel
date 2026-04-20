@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using Il2CppYgomSystem.UI;
 using Il2CppYgomSystem.ElementSystem;
+using Il2CppYgomGame.Dialog.CommonDialog;
+using Il2CppYgomGame.Utility;
 
 namespace BlindDuel
 {
@@ -65,8 +67,10 @@ namespace BlindDuel
 
                         if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(body)) return;
 
-                        // Build item list body for reward/item dialogs
-                        string itemBody = BuildItemListBody(texts);
+                        // Build item list body — prefer game-native data (accurate quantities)
+                        // over scraping TMP text (which may show placeholder "9999")
+                        string itemBody = BuildItemListFromWidget(dialogUI.gameObject)
+                                          ?? BuildItemListBody(texts);
                         if (!string.IsNullOrEmpty(itemBody))
                             body = itemBody;
 
@@ -88,8 +92,46 @@ namespace BlindDuel
         }
 
         /// <summary>
+        /// Read reward items from the game's CommonDialogItemListWidget data (accurate
+        /// quantities from EntryItemListData.contexts, bypassing UI placeholder text).
+        /// Returns null if no widget is present.
+        /// </summary>
+        private static string BuildItemListFromWidget(GameObject root)
+        {
+            try
+            {
+                var widget = root.GetComponentInChildren<CommonDialogItemListWidget>(true);
+                if (widget == null) return null;
+
+                var data = widget.m_EntryData;
+                if (data?.contexts == null || data.contexts.Count == 0) return null;
+
+                var items = new List<string>();
+                for (int i = 0; i < data.contexts.Count; i++)
+                {
+                    var ctx = data.contexts[i];
+                    if (ctx == null) continue;
+
+                    string name = ItemUtil.GetItemName(ctx.isPeriod, ctx.itemCategory, ctx.itemId);
+                    if (string.IsNullOrWhiteSpace(name))
+                        name = ItemUtil.GetItemCategoryName(ctx.isPeriod, ctx.itemCategory, ctx.itemId);
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+
+                    items.Add(ctx.num > 1 ? $"{name} x{ctx.num}" : name);
+                }
+
+                return items.Count > 0 ? string.Join(", ", items) : null;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"[Dialog] ItemListWidget read error: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Build a body string from ItemNameText/ItemNumText pairs found in dialog scans.
-        /// Returns null if no item list pattern is found.
+        /// Fallback when the game-native widget data isn't available.
         /// </summary>
         private static string BuildItemListBody(List<TextResult> texts)
         {
