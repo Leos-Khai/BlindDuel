@@ -75,6 +75,9 @@ namespace BlindDuel
                                 }
                                 catch { }
 
+                                // CardSelectionList = efeito solicitando seleção (Enter/A).
+                                // Nesses casos (invocar do extra deck, ativar efeito do cemitério,
+                                // selecionar card por efeito) sempre lê o card completo.
                                 string index2 = GetSelectionIndex(button);
                                 bool queued2 = PatchCardSelectionListSetTitle.ConsumeQueuedFlag();
                                 CardReader.SpeakCardFromData(data.cardid, index2, queued: queued2);
@@ -134,6 +137,7 @@ namespace BlindDuel
                         DuelState.LastBrowseLogicalIdx = logicalIdx;
 
                         string indexStr = totalCards > 0 ? $"{logicalIdx + 1} of {totalCards}" : null;
+                        string zoneLabel = BuildPileZoneLabel(player, position, indexStr);
 
                         // Don't reveal opponent's face-down cards
                         if (!DuelState.IsMyPlayer(player))
@@ -142,7 +146,9 @@ namespace BlindDuel
                             {
                                 if (!Engine.GetCardFace(player, position, logicalIdx))
                                 {
-                                    string msg = indexStr != null ? $"Face-down card, {indexStr}" : "Face-down card";
+                                    string msg = zoneLabel != null ? $"Face-down card, {zoneLabel}" : "Face-down card";
+                                    DuelState.CardDetailLines = null;
+                                    DuelState.CardDetailIndex = 0;
                                     Speech.SayItem(msg);
                                     return "";
                                 }
@@ -153,12 +159,14 @@ namespace BlindDuel
                         int mrk = Engine.GetCardID(player, position, logicalIdx);
                         if (mrk > 0)
                         {
-                            CardReader.SpeakCardFromData(mrk, indexStr);
+                            SpeakCardSummaryFromData(mrk, zoneLabel);
                             return "";
                         }
                         else
                         {
-                            string msg = indexStr != null ? $"Face-down card, {indexStr}" : "Face-down card";
+                            string msg = zoneLabel != null ? $"Face-down card, {zoneLabel}" : "Face-down card";
+                            DuelState.CardDetailLines = null;
+                            DuelState.CardDetailIndex = 0;
                             Speech.SayItem(msg);
                             return "";
                         }
@@ -181,6 +189,50 @@ namespace BlindDuel
             // Hand cards are handled by PatchHandCardSelect (SelectByViewIndex patch).
             // Action buttons (Summon, Set, etc.) — default behavior.
             return null;
+        }
+
+        private static void SpeakCardSummaryFromData(int mrk, string zoneLabel, bool queued = false)
+        {
+            BlindDuelCore.Preview.Clear();
+            var card = CardReader.ReadCardFromData(mrk);
+
+            var lines = card.GetDetailLines(out string summary, zone: zoneLabel);
+            DuelState.CardDetailLines = lines;
+            DuelState.CardDetailIndex = 0;
+
+            if (string.IsNullOrWhiteSpace(summary))
+                summary = !string.IsNullOrWhiteSpace(zoneLabel) ? zoneLabel : card.Name;
+
+            if (string.IsNullOrWhiteSpace(summary)) return;
+
+            if (queued)
+                Speech.SayQueued(summary);
+            else
+                Speech.SayItem(summary);
+        }
+
+        private static bool IsPileBrowsePosition(int position)
+        {
+            return position == Engine.PosGrave
+                || position == Engine.PosExclude
+                || position == Engine.PosExtra;
+        }
+
+        private static string BuildPileZoneLabel(int player, int position, string index)
+        {
+            string side = DuelState.IsMyPlayer(player) ? "" : "Opponent's ";
+            string zone = null;
+            if (position == Engine.PosGrave)
+                zone = $"{side}Graveyard";
+            else if (position == Engine.PosExclude)
+                zone = $"{side}Banished";
+            else if (position == Engine.PosExtra)
+                zone = $"{side}Extra Deck";
+
+            if (string.IsNullOrEmpty(zone))
+                return index;
+
+            return !string.IsNullOrEmpty(index) ? $"{zone}, {index}" : zone;
         }
 
         /// <summary>
