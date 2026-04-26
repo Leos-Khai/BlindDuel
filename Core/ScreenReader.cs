@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using MelonLoader;
+using UnityEngine;
 
 namespace BlindDuel
 {
@@ -94,6 +95,7 @@ namespace BlindDuel
             if (string.IsNullOrEmpty(text) || !_initialized) return;
             text = TextUtil.FixPlurals(text);
             _lastMessage = text;
+            if (!Application.isFocused) return;
             try { Tolk_Output(text, true); }
             catch (Exception ex) { Log.Write($"[ScreenReader] Say error: {ex.Message}"); }
         }
@@ -108,6 +110,7 @@ namespace BlindDuel
             if (string.IsNullOrEmpty(text) || !_initialized) return;
             text = TextUtil.FixPlurals(text);
             _lastMessage = text;
+            if (!Application.isFocused) return;
             try { Tolk_Output(text, false); }
             catch (Exception ex) { Log.Write($"[ScreenReader] SayQueued error: {ex.Message}"); }
         }

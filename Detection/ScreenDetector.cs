@@ -240,6 +240,16 @@ namespace BlindDuel
                 UpdateMenuContext(cleanName);
                 HandlerRegistry.SetCurrentFromVC(cleanName);
 
+                // HomeSubMenu overlay doesn't register as a focus VC, so when a pushed
+                // VC (e.g. Settings) closes and focus returns to Home while the submenu
+                // is still open, VC-name routing picks HomeHandler instead of HomeSubMenu.
+                // Only override when routing landed on HomeHandler (don't clobber pushed VCs).
+                var sub = HomeSubMenuState.CurrentInstance;
+                if (HandlerRegistry.Current is HomeHandler && sub != null && !sub.WasCollected)
+                {
+                    HandlerRegistry.SetCurrentFromVC("HomeSubMenu");
+                }
+
                 // Setup screens and movie playback — skip announcement
                 if (cleanName is "GameEntryV1" or "GameEntrySequenceV2" or "Scenario") return;
 
